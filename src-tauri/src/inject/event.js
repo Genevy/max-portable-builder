@@ -1,0 +1,1753 @@
+// Prefer native webview navigation over page JS so Ctrl+R / [ / ] still work
+// on blank error shells (no JS context). Falls back to history/location when
+// the IPC bridge is unavailable.
+function nativeNavigate(action) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    invoke("webview_navigate", { action }).catch(() => {
+      fallbackNavigate(action);
+    });
+    return;
+  }
+  fallbackNavigate(action);
+}
+
+function fallbackNavigate(action) {
+  if (action === "reload") {
+    window.location.reload();
+  } else if (action === "back") {
+    window.history.back();
+  } else if (action === "forward") {
+    window.history.forward();
+  }
+}
+
+const shortcuts = {
+  "[": () => nativeNavigate("back"),
+  "]": () => nativeNavigate("forward"),
+  "-": () => zoomOut(),
+  "=": () => zoomIn(),
+  "+": () => zoomIn(),
+  0: () => setZoom("100%"),
+  r: () => nativeNavigate("reload"),
+  ArrowUp: () => scrollTo(0, 0),
+  ArrowDown: () => scrollTo(0, document.body.scrollHeight),
+};
+
+function setZoom(zoom) {
+  // Use native WebView zoom (WKWebView pageZoom / WebView2 ZoomFactor) instead of
+  // CSS hacks. `transform: scale` and `html.style.zoom` break complex SPAs like
+  // ChatGPT: the page shifts right on Windows and parts of the UI stop repainting
+  // on macOS. Native zoom recalculates layout exactly like a browser does.
+  const zoomPercent = normalizeZoomPercent(zoom);
+  const normalizedZoom = `${zoomPercent}%`;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) {
+    invoke("set_zoom", { percent: zoomPercent }).catch(() => {});
+  }
+
+  window.localStorage.setItem("htmlZoom", normalizedZoom);
+}
+
+function zoomCommon(zoomChange) {
+  const currentZoom = window.localStorage.getItem("htmlZoom") || "100%";
+  setZoom(zoomChange(normalizeZoomPercent(currentZoom)));
+}
+
+function zoomIn() {
+  zoomCommon((currentZoom) => `${Math.min(currentZoom + 10, 200)}%`);
+}
+
+function zoomOut() {
+  zoomCommon((currentZoom) => `${Math.max(currentZoom - 10, 30)}%`);
+}
+
+function normalizeZoomPercent(zoom) {
+  const parsed = parseFloat(zoom);
+  return Number.isFinite(parsed) ? parsed : 100;
+}
+
+let pasteAsPlainTextPending = false;
+
+function triggerPasteAsPlainText() {
+  pasteAsPlainTextPending = true;
+  document.execCommand("paste");
+  setTimeout(() => {
+    pasteAsPlainTextPending = false;
+  }, 100);
+}
+
+function handleShortcut(event) {
+  if (shortcuts[event.key]) {
+    event.preventDefault();
+    shortcuts[event.key]();
+  }
+}
+
+function handleWebShortcut(event) {
+  if (isNonMacDesktop() && event.ctrlKey) {
+    handleShortcut(event);
+    return;
+  }
+
+  const isMac = /mac/i.test(getDesktopPlatform());
+  const isMacScrollShortcut =
+    event.key === "ArrowUp" || event.key === "ArrowDown";
+  if (isMac && event.metaKey && isMacScrollShortcut) {
+    handleShortcut(event);
+  }
+}
+
+function toggleNativeFullscreen(appWindow) {
+  appWindow
+    .isFullscreen()
+    .then((fullscreen) => {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        return document.exitFullscreen();
+      }
+      return appWindow.setFullscreen(!fullscreen);
+    })
+    .catch((error) => {
+      console.warn("[Pake] Failed to toggle native fullscreen:", error);
+    });
+}
+
+function handleWindowFullscreenShortcut(event) {
+  if (
+    !event.isTrusted ||
+    event.repeat ||
+    event.key !== "F11" ||
+    !isNonMacDesktop()
+  ) {
+    return;
+  }
+
+  const appWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!appWindow) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  toggleNativeFullscreen(appWindow);
+}
+
+function getDesktopPlatform() {
+  return (
+    navigator.userAgentData?.platform ||
+    navigator.platform ||
+    navigator.userAgent
+  );
+}
+
+function isNonMacDesktop() {
+  return /win|linux/i.test(getDesktopPlatform());
+}
+
+function hasImmersiveHeader(config = window["pakeConfig"] || {}) {
+  return /mac/i.test(getDesktopPlatform())
+    ? config.hide_title_bar === true
+    : config.hide_window_decorations === true;
+}
+
+function isEditableElement(element) {
+  if (!element) return false;
+
+  const tagName = element.tagName;
+  return (
+    tagName === "INPUT" || tagName === "TEXTAREA" || element.isContentEditable
+  );
+}
+
+function hasSelectedText() {
+  return Boolean(window.getSelection?.()?.toString());
+}
+
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+function isTextInputElement(element) {
+  return (
+    element?.tagName === "INPUT" &&
+    !NON_TEXT_INPUT_TYPES.has((element.type || "text").toLowerCase())
+  );
+}
+
+function selectEditableElement(element) {
+  if (typeof element.select === "function") {
+    element.select();
+    return true;
+  }
+
+  if (element.isContentEditable) {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection?.();
+    if (!selection) return false;
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }
+
+  return false;
+}
+
+function canPasteIntoEditableElement(element) {
+  if (!isEditableElement(element)) return false;
+
+  if (element.tagName === "INPUT") {
+    return (
+      isTextInputElement(element) &&
+      element.disabled !== true &&
+      element.readOnly !== true
+    );
+  }
+
+  if (element.tagName === "TEXTAREA") {
+    return element.disabled !== true && element.readOnly !== true;
+  }
+
+  return true;
+}
+
+function insertTextIntoEditableElement(element, text) {
+  if (!text) return false;
+
+  if (document.execCommand("insertText", false, text)) {
+    return true;
+  }
+
+  if (
+    element &&
+    (isTextInputElement(element) || element.tagName === "TEXTAREA") &&
+    typeof element.setRangeText === "function"
+  ) {
+    const valueLength =
+      typeof element.value === "string" ? element.value.length : 0;
+    const start =
+      typeof element.selectionStart === "number"
+        ? element.selectionStart
+        : valueLength;
+    const end =
+      typeof element.selectionEnd === "number" ? element.selectionEnd : start;
+    element.setRangeText(text, start, end, "end");
+    element.dispatchEvent?.(new Event("input", { bubbles: true }));
+    return true;
+  }
+
+  return false;
+}
+
+let clipboardPasteFallbackTarget;
+let clipboardPasteFallbackArmedAt = 0;
+// An armed fallback older than this is a leftover from a keyup the window
+// never saw (alt-tab mid-press); firing it on a later plain "v" keyup would
+// paste unexpectedly.
+const CLIPBOARD_PASTE_FALLBACK_TTL_MS = 5000;
+
+function pasteClipboardText(activeElement) {
+  const readText = navigator.clipboard?.readText;
+  if (typeof readText !== "function") {
+    return;
+  }
+
+  readText
+    .call(navigator.clipboard)
+    .then((text) => {
+      insertTextIntoEditableElement(activeElement, text);
+    })
+    .catch(() => {});
+}
+
+function handleClipboardShortcut(event) {
+  if (
+    event.isTrusted !== true ||
+    !isNonMacDesktop() ||
+    !event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  ) {
+    return false;
+  }
+
+  const key = event.key?.toLowerCase();
+  const activeElement = document.activeElement;
+  const isEditable = isEditableElement(activeElement);
+
+  if (key === "c" && (isEditable || hasSelectedText())) {
+    document.execCommand("copy");
+    event.preventDefault();
+    return true;
+  }
+
+  if (key === "x" && isEditable) {
+    document.execCommand("cut");
+    event.preventDefault();
+    return true;
+  }
+
+  if (key === "v" && canPasteIntoEditableElement(activeElement)) {
+    // Let the native WebView paste event run first so images, files, and rich
+    // clipboard formats remain intact. If the platform does not emit paste,
+    // keyup applies the existing text-only fallback. Key-repeat must not
+    // re-arm: after a native paste already fired and disarmed the fallback,
+    // a repeat keydown re-arming it would make keyup paste text a second
+    // time. Repeats only refresh the TTL of a still-armed target.
+    if (!event.repeat) {
+      clipboardPasteFallbackTarget = activeElement;
+      clipboardPasteFallbackArmedAt = Date.now();
+    } else if (clipboardPasteFallbackTarget === activeElement) {
+      clipboardPasteFallbackArmedAt = Date.now();
+    }
+    return false;
+  }
+
+  if (key === "a" && isEditable && selectEditableElement(activeElement)) {
+    event.preventDefault();
+    return true;
+  }
+
+  return false;
+}
+
+function handleClipboardPasteFallback(event) {
+  if (
+    event.isTrusted !== true ||
+    !isNonMacDesktop() ||
+    event.key?.toLowerCase() !== "v"
+  ) {
+    return false;
+  }
+
+  const activeElement = clipboardPasteFallbackTarget;
+  const armedAt = clipboardPasteFallbackArmedAt;
+  clipboardPasteFallbackTarget = undefined;
+  if (
+    !activeElement ||
+    Date.now() - armedAt > CLIPBOARD_PASTE_FALLBACK_TTL_MS ||
+    document.activeElement !== activeElement ||
+    !canPasteIntoEditableElement(activeElement)
+  ) {
+    return false;
+  }
+
+  pasteClipboardText(activeElement);
+  return true;
+}
+
+function handlePaste(event) {
+  clipboardPasteFallbackTarget = undefined;
+  if (!pasteAsPlainTextPending) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  const text = event.clipboardData?.getData("text/plain") || "";
+  if (text) {
+    document.execCommand("insertText", false, text);
+  }
+}
+
+const DOWNLOADABLE_FILE_EXTENSIONS = {
+  documents: [
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "ppt",
+    "pptx",
+    "txt",
+    "rtf",
+    "odt",
+    "ods",
+    "odp",
+    "pages",
+    "numbers",
+    "key",
+    "epub",
+    "mobi",
+  ],
+  archives: [
+    "zip",
+    "rar",
+    "7z",
+    "tar",
+    "gz",
+    "gzip",
+    "bz2",
+    "xz",
+    "lzma",
+    "deb",
+    "rpm",
+    "pkg",
+    "msi",
+    "exe",
+    "dmg",
+    "apk",
+    "ipa",
+  ],
+  // Navigable web formats (json/xml/js/css/html and friends) are intentionally
+  // omitted: documentation and SPA content negotiation often serve them as
+  // in-app pages. Real file downloads still match via the download attribute,
+  // ?download / ?attachment, or binary extensions below.
+  data: ["csv", "sql", "db", "sqlite"],
+  scripts: ["sh", "bat", "ps1"],
+  fonts: ["ttf", "otf", "woff", "woff2", "eot"],
+  design: ["ai", "psd", "sketch", "fig", "xd"],
+  system: [
+    "iso",
+    "img",
+    "bin",
+    "torrent",
+    "jar",
+    "war",
+    "indd",
+    "fla",
+    "swf",
+    "raw",
+  ],
+};
+
+const ALL_DOWNLOADABLE_EXTENSIONS = Object.values(
+  DOWNLOADABLE_FILE_EXTENSIONS,
+).flat();
+
+const PREVIEWABLE_MEDIA_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "tiff",
+  "tif",
+  "avif",
+  "heic",
+  "heif",
+  "mp4",
+  "webm",
+  "mov",
+  "m4v",
+  "mkv",
+  "avi",
+  "ogv",
+  "mp3",
+  "wav",
+  "ogg",
+  "flac",
+  "aac",
+  "m4a",
+];
+
+// Path fragments that often host real file downloads. Keep this list narrow:
+// SPA roots such as "/assets/", "/dist/", "/files/", "/releases/", and
+// "/attachments/" have already been mistaken for downloads in the wild.
+// Prefer real file extensions, the download attribute, or ?download /
+// ?attachment query hints whenever possible.
+const DOWNLOAD_PATH_PATTERNS = ["/download/"];
+
+// Language detection utilities
+function getUserLanguage() {
+  return navigator.language || navigator.userLanguage;
+}
+
+function isChineseLanguage(language = getUserLanguage()) {
+  return (
+    language &&
+    (language.startsWith("zh") ||
+      language.includes("CN") ||
+      language.includes("TW") ||
+      language.includes("HK"))
+  );
+}
+
+// User notification helper
+function showDownloadError(filename) {
+  const isChinese = isChineseLanguage();
+  const message = isChinese
+    ? `下载失败: ${filename}`
+    : `Download failed: ${filename}`;
+
+  if (window.Notification && Notification.permission === "granted") {
+    new Notification(isChinese ? "下载错误" : "Download Error", {
+      body: message,
+    });
+  } else {
+    console.error(message);
+  }
+}
+
+function getExtension(url) {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    const extensionIndex = pathname.lastIndexOf(".");
+    return extensionIndex > -1 ? pathname.slice(extensionIndex + 1) : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function isPreviewableMedia(url) {
+  const extension = getExtension(url);
+  return PREVIEWABLE_MEDIA_EXTENSIONS.includes(extension);
+}
+
+// Unified file detection - replaces both isDownloadLink and isFileLink
+function isDownloadableFile(url) {
+  try {
+    const extension = getExtension(url);
+    if (PREVIEWABLE_MEDIA_EXTENSIONS.includes(extension)) {
+      return false;
+    }
+
+    const urlObj = new URL(url);
+    const hasDownloadHints =
+      urlObj.searchParams.has("download") ||
+      urlObj.searchParams.has("attachment");
+
+    if (hasDownloadHints) {
+      return true;
+    }
+
+    return (
+      ALL_DOWNLOADABLE_EXTENSIONS.includes(extension) ||
+      DOWNLOAD_PATH_PATTERNS.some((pattern) =>
+        urlObj.pathname.toLowerCase().includes(pattern),
+      )
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function normalizeAnchorHref(rawHref) {
+  return typeof rawHref === "string" ? rawHref.trim() : "";
+}
+
+function shouldBypassPakeLinkHandling(rawHref) {
+  const normalizedHref = normalizeAnchorHref(rawHref).toLowerCase();
+  if (!normalizedHref) {
+    return false;
+  }
+
+  return (
+    normalizedHref.startsWith("javascript:") || normalizedHref.startsWith("#")
+  );
+}
+
+function shouldNavigateAuthInCurrentWindow() {
+  // WKWebView can abort on auth popups, while WebKitGTK may return a truthy
+  // proxy even when the native side denies the window. Keep those platforms
+  // in-place without changing the working WebView2 popup path on Windows.
+  return /mac|linux/i.test(getDesktopPlatform());
+}
+
+function canNavigateAuthUrl(url) {
+  const normalizedUrl = normalizeAnchorHref(url).toLowerCase();
+  return normalizedUrl !== "" && normalizedUrl !== "about:blank";
+}
+
+function isAppleAuthPopup(url, name) {
+  if (name === "AppleAuthentication") {
+    return true;
+  }
+
+  try {
+    return (
+      new URL(url, window.location.href).hostname.toLowerCase() ===
+      "appleid.apple.com"
+    );
+  } catch (error) {
+    return false;
+  }
+}
+
+function navigateInCurrentWindow(url) {
+  window.location.href = url;
+  return window;
+}
+
+function openAuthNavigation(originalWindowOpen, url, name, specs) {
+  if (isAppleAuthPopup(url, name)) {
+    const authWindow = originalWindowOpen.call(window, url, name, specs);
+    if (authWindow) {
+      return authWindow;
+    }
+  }
+
+  if (shouldNavigateAuthInCurrentWindow() && canNavigateAuthUrl(url)) {
+    return navigateInCurrentWindow(url);
+  }
+
+  const authWindow = originalWindowOpen.call(window, url, name, specs);
+  if (!authWindow) {
+    return navigateInCurrentWindow(url);
+  }
+
+  return authWindow;
+}
+
+// Install the receiver at document start: a subframe can open a link before
+// the main page's DOMContentLoaded routing setup has run.
+let openFrameLink = null;
+const pendingFrameLinks = [];
+function isDescendantFrame(source, parent = window) {
+  for (let index = 0; index < parent.frames.length; index++) {
+    const frame = parent.frames[index];
+    if (frame === source || isDescendantFrame(source, frame)) return true;
+  }
+  return false;
+}
+function routeFrameLink(source, href) {
+  try {
+    // Recheck on delivery because the frame may have been removed meanwhile.
+    if (!isDescendantFrame(source)) return;
+    const url = new URL(href);
+    if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return;
+    if (openFrameLink) {
+      openFrameLink.call(window, url.href, "_blank");
+    } else {
+      pendingFrameLinks.push({ source, href: url.href });
+    }
+  } catch (error) {
+    console.error("[Pake] Failed to route frame link:", error);
+  }
+}
+window.addEventListener("message", (event) => {
+  if (
+    event.data?.type !== "pake:frame-external-link" ||
+    typeof event.data.url !== "string" ||
+    !event.source ||
+    event.source === window
+  )
+    return;
+  routeFrameLink(event.source, event.data.url);
+});
+window.addEventListener("pagehide", () => {
+  pendingFrameLinks.length = 0;
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const tauri = window.__TAURI__;
+  const appWindow = tauri.window.getCurrentWindow();
+  const invoke = tauri.core.invoke;
+  const pakeConfig = window["pakeConfig"] || {};
+  const forceInternalNavigation = pakeConfig.force_internal_navigation === true;
+  const matchesInternalUrl = createInternalUrlMatcher(
+    pakeConfig.internal_url_regex,
+  );
+
+  if (!document.getElementById("pake-top-dom") && hasImmersiveHeader()) {
+    const topDom = document.createElement("div");
+    topDom.id = "pake-top-dom";
+    document.body.appendChild(topDom);
+  }
+
+  const domEl = document.getElementById("pake-top-dom");
+
+  if (domEl) {
+    domEl.addEventListener("touchstart", () => {
+      appWindow.startDragging();
+    });
+
+    domEl.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      if (e.buttons === 1 && e.detail !== 2) {
+        appWindow.startDragging();
+      }
+    });
+
+    domEl.addEventListener("dblclick", () => {
+      toggleNativeFullscreen(appWindow);
+    });
+  }
+
+  if (window["pakeConfig"]?.disabled_web_shortcuts !== true) {
+    document.addEventListener("keydown", handleWindowFullscreenShortcut, true);
+    document.addEventListener("keyup", handleWebShortcut);
+  }
+
+  document.addEventListener("keydown", handleClipboardShortcut, true);
+  document.addEventListener("keyup", handleClipboardPasteFallback, true);
+  document.addEventListener("paste", handlePaste, true);
+
+  // Trigger a native browser download via a transient anchor click. The Rust
+  // on_download handler then writes the file to the Downloads folder. This is
+  // used for blob:/data: URLs because routing their bytes through the Tauri
+  // IPC fails on strict-CSP sites (e.g. Gemini), whose connect-src blocks the
+  // IPC origin. It also handles attachments when remote IPC is denied.
+  const nativeDownloadAnchors = new WeakSet();
+  function triggerNativeDownload(url, filename) {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename || "";
+    anchor.style.display = "none";
+    nativeDownloadAnchors.add(anchor);
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  }
+
+  // process special download protocol['data:','blob:']
+  const isSpecialDownload = (url) =>
+    ["blob", "data"].some((protocol) => url.startsWith(protocol));
+
+  // Cmd/Ctrl+click is a browser "open related" gesture, not "save as".
+  // Only the download attribute and downloadable-file heuristics force a
+  // download; modifiers must not rewrite ordinary navigation.
+  // hasAttribute, not Boolean: `<a download="">` is a valid download marker
+  // (empty value means "use the default filename"), but Boolean("") is false.
+  // MAX creates exactly this shape: <a href="blob:..." download="" target="_self">.
+  const isDownloadRequired = (url, anchorElement, _e) =>
+    anchorElement.hasAttribute("download") || isDownloadableFile(url);
+
+  // Returns true if the URL was handled (opened externally or is a
+  // blob:/data: download that the webview must handle natively),
+  // false if the caller should let the click fall through.
+  const handleExternalLink = (url) => {
+    // blob: and data: URLs only exist inside this webview context. The shell
+    // cannot open them. Return true so the caller does NOT preventDefault:
+    // let the native webview handle <a download> so its DownloadStarting
+    // event fires and the Save-as dialog opens (or on_download fires).
+    if (isSpecialDownload(url)) {
+      return true;
+    }
+
+    invoke("plugin:shell|open", {
+      path: url,
+    }).catch((error) => {
+      console.error("Failed to open URL with shell:", url, error);
+    });
+    return true;
+  };
+
+  function downloadFile(url, filename) {
+    return invoke("download_file", {
+      params: {
+        url,
+        filename,
+        language: getUserLanguage(),
+        user_agent: navigator.userAgent,
+        page_url: window.location.href,
+        ask_path: true,
+      },
+    }).catch((error) => {
+      // Debug and release builds have different ACL rejection messages.
+      // Let the browser handle attachments without granting remote IPC.
+      if (/^(?:Command )?download_file not allowed\b/.test(String(error))) {
+        triggerNativeDownload(url, filename);
+        return;
+      }
+      console.error("Failed to download file:", filename, error);
+      showDownloadError(filename);
+    });
+  }
+
+  const isInternalUrl = (url) => matchesInternalUrl(url, window.location.href);
+
+  // Fetch the bytes of a blob:/data: URL and hand them to Rust
+  // (download_file_by_binary), which writes the file to the Downloads folder
+  // and shows the native toast. Used because WebView2 silently drops
+  // <a download href="blob:..." target="_self"> as a navigation.
+    function downloadSpecial(absoluteUrl, filename, e) {
+    if (e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+    const safeName = filename || "download";
+    fetch(absoluteUrl)
+      .then((r) => r.blob())
+      .then((b) => b.arrayBuffer())
+      .then((buf) => {
+        // Route bytes through the existing download_file command (already
+        // allowed by ACL). The Rust side takes the `buffer` fast path and
+        // writes the bytes directly instead of fetching by URL.
+        invoke("download_file", {
+          params: {
+            filename: safeName,
+            buffer: Array.from(new Uint8Array(buf)),
+            language: getUserLanguage(),
+            user_agent: navigator.userAgent,
+            page_url: window.location.href,
+            ask_path: true,
+          },
+        }).catch((err) => {
+          console.error("[Pake] download_file (buffer) failed:", err);
+          showDownloadError(safeName);
+        });
+      })
+      .catch((err) => {
+        console.error("[Pake] blob fetch failed:", err);
+        showDownloadError(safeName);
+      });
+  }
+
+  const detectAnchorElementClick = (e) => {
+    // Safety check: ensure e.target exists and is an Element with closest method
+    if (!e.target || typeof e.target.closest !== "function") {
+      return;
+    }
+    const anchorElement = e.target.closest("a");
+
+    if (anchorElement && nativeDownloadAnchors.has(anchorElement)) return;
+
+    if (anchorElement && anchorElement.href) {
+      const rawHref = anchorElement.getAttribute("href") || "";
+      if (shouldBypassPakeLinkHandling(rawHref)) {
+        return;
+      }
+
+      const target = anchorElement.target;
+      const hrefUrl = new URL(anchorElement.href);
+      if (["mailto:", "tel:"].includes(hrefUrl.protocol)) return;
+      const absoluteUrl = hrefUrl.href;
+      let filename = anchorElement.download || getFilenameFromUrl(absoluteUrl);
+
+      // Keep OAuth/authentication flows inside the app. Without --new-window,
+      // navigate in place so the SSO redirect chain and callback stay in the
+      // webview instead of falling through to the system browser.
+      if (window.isAuthLink(absoluteUrl)) {
+        console.log("[Pake] Handling OAuth navigation in-app:", absoluteUrl);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        if (window.pakeConfig?.new_window) {
+          openAuthNavigation(
+            originalWindowOpen,
+            absoluteUrl,
+            "_blank",
+            "width=1200,height=800,scrollbars=yes,resizable=yes",
+          );
+        } else {
+          window.location.href = absoluteUrl;
+        }
+
+        return;
+      }
+
+      // Handle _blank links: internal links stay in-app, external links open in the system browser
+      if (target === "_blank") {
+        if (forceInternalNavigation) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          window.location.href = absoluteUrl;
+          return;
+        }
+
+        if (isInternalUrl(absoluteUrl)) {
+          // ...
+          if (!window.pakeConfig?.new_window) {
+            anchorElement.target = "_self";
+          }
+          return;
+        }
+
+        // blob:/data: cannot be handled by the webview natively: WebView2
+        // drops <a download href="blob:..." target="_self"> as a navigation
+        // (no DownloadStarting, no on_download, no Save-as). Fetch the bytes
+        // and hand them to Rust (download_file_by_binary), the same path the
+        // context menu's "Download Image" uses.
+        if (isSpecialDownload(absoluteUrl)) {
+          downloadSpecial(absoluteUrl, filename, e);
+          return;
+        }
+
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleExternalLink(absoluteUrl);
+        return;
+      }
+
+      if (target === "_new") {
+        if (forceInternalNavigation) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          window.location.href = absoluteUrl;
+          return;
+        }
+
+        if (isInternalUrl(absoluteUrl)) {
+          return;
+        }
+
+        if (isSpecialDownload(absoluteUrl)) {
+          downloadSpecial(absoluteUrl, filename, e);
+          return;
+        }
+
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleExternalLink(absoluteUrl);
+        return;
+      }
+
+      // blob:/data: cannot be handled by the webview natively: WebView2
+      // drops <a download href="blob:..." target="_self"> as a navigation
+      // (no DownloadStarting, no on_download, no Save-as). Fetch the bytes
+      // and hand them to Rust (download_file_by_binary), the same path the
+      // context menu's "Download Image" uses.
+      if (isDownloadRequired(absoluteUrl, anchorElement, e)) {
+         if (isSpecialDownload(absoluteUrl)) {
+          downloadSpecial(absoluteUrl, filename, e);
+          return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        downloadFile(absoluteUrl, filename);
+        return;
+      }
+
+      // Handle regular links: internal URLs allow normal navigation, external links open in the system browser
+      if (!target || target === "_self") {
+        // Optimization: Allow previewable media to be handled by the app/browser directly
+        // This fixes issues where CDN links are treated as external
+        if (isPreviewableMedia(absoluteUrl)) {
+          return;
+        }
+
+        if (!isInternalUrl(absoluteUrl)) {
+          if (forceInternalNavigation) {
+            return;
+          }
+
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          handleExternalLink(absoluteUrl);
+        }
+      }
+    }
+  };
+
+  window.addEventListener("click", (event) =>
+    handleProtocolLinkClick(event, handleExternalLink),
+  );
+
+  // MAX creates <a download="" target="_self" href="blob:..."> detached from
+  // the DOM and calls .click() on it. A document-level click listener never
+  // sees that event (detached nodes have no path to document), so intercept
+  // the prototype method instead. Native (in-DOM, trusted) clicks are left
+  // untouched — they still flow through detectAnchorElementClick above.
+  const _origAnchorClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () {
+    try {
+      // Our own triggerNativeDownload anchors must always go native: the
+      // whole point of that helper is to let WebView2 raise DownloadStarting
+      // on strict-CSP sites where fetch(blob:) is blocked.
+      if (nativeDownloadAnchors.has(this)) {
+        return _origAnchorClick.apply(this, arguments);
+      }
+      // In-DOM anchors: let the capture-phase document listener handle them.
+      if (this.isConnected) {
+        return _origAnchorClick.apply(this, arguments);
+      }
+      const href = this.href || "";
+      if (isSpecialDownload(href)) {
+        const filename =
+          this.getAttribute("download") || getFilenameFromUrl(href);
+        downloadSpecial(href, filename, null);
+        return;
+      }
+    } catch (e) {
+      console.error("[Pake] anchor click intercept failed:", e);
+    }
+    return _origAnchorClick.apply(this, arguments);
+  };
+
+  // Capture web links before site popup handlers route them into the app.
+  document.addEventListener("click", detectAnchorElementClick, true);
+
+  // Rewrite the window.open function.
+  const originalWindowOpen = window.open;
+  window.open = function (url, name, specs) {
+    url = normalizePopupUrl(url);
+    const normalizedUrl = normalizeAnchorHref(url);
+    // A two-stage popup needs its own WindowProxy. Returning the main window
+    // makes a later popup.location assignment navigate away from the app.
+    if (/^about:blank(?:[?#]|$)/i.test(normalizedUrl)) {
+      return originalWindowOpen.call(window, url, name, specs);
+    }
+    if (normalizedUrl.startsWith("#")) {
+      window.location.href = new URL(normalizedUrl, window.location.href).href;
+      return window;
+    }
+
+    if (shouldBypassPakeLinkHandling(url)) {
+      return originalWindowOpen.call(window, url, name, specs);
+    }
+
+    // Avoid macOS WebKit auth-popup crashes by navigating auth URLs in-place.
+    if (window.isAuthPopup(url, name)) {
+      try {
+        const baseUrl = window.location.origin + window.location.pathname;
+        const absoluteUrl = new URL(url, baseUrl).href;
+        return openAuthNavigation(originalWindowOpen, absoluteUrl, name, specs);
+      } catch (error) {
+        return openAuthNavigation(originalWindowOpen, url, name, specs);
+      }
+    }
+
+    try {
+      const baseUrl = window.location.origin + window.location.pathname;
+      const hrefUrl = new URL(url, baseUrl);
+      const absoluteUrl = hrefUrl.href;
+
+      if (!isInternalUrl(absoluteUrl)) {
+        if (forceInternalNavigation) {
+          return originalWindowOpen.call(window, absoluteUrl, name, specs);
+        }
+
+        handleExternalLink(absoluteUrl);
+        return null;
+      }
+
+      // With --new-window the native handler opens an in-app window; without it,
+      // originalWindowOpen would route the internal target to the system browser
+      // and strand SSO callbacks, so navigate in place instead.
+      if (!window.pakeConfig?.new_window) {
+        window.location.href = absoluteUrl;
+        return window;
+      }
+
+      return originalWindowOpen.call(window, absoluteUrl, name, specs);
+    } catch (error) {
+      return originalWindowOpen.call(window, url, name, specs);
+    }
+  };
+
+  // The sender is untrusted even when it belongs to this webview. This bridge
+  // may only open external links, never navigate the top page or create auth
+  // windows on a sandboxed frame's behalf.
+  openFrameLink = (url) => {
+    if (
+      forceInternalNavigation ||
+      isInternalUrl(url) ||
+      window.isAuthLink(url)
+    ) {
+      return;
+    }
+    handleExternalLink(url);
+  };
+  for (const { source, href } of pendingFrameLinks.splice(0)) {
+    routeFrameLink(source, href);
+  }
+
+  // Set the default zoom, There are problems with Loop without using try-catch.
+  try {
+    setDefaultZoom();
+  } catch (e) {
+    console.log(e);
+  }
+
+  // Fix Chinese input method "Enter" on Safari.
+  // WebKit flags a keydown the input method consumed with keyCode 229, and the
+  // Enter that confirms a candidate arrives after compositionend. keyCode 229
+  // is needed here because isComposing can already be false on that keydown.
+  // stopPropagation, not preventDefault, so the input method can still commit.
+  // Only Enter is held back; other composing keys still reach editors.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      const isImeEnter = e.key === "Enter" && e.keyCode === 229;
+      if (isImeEnter || e.key === "Process") e.stopPropagation();
+    },
+    true,
+  );
+
+  // Language detection and texts
+  const isChinese = isChineseLanguage();
+
+  const menuTexts = {
+    // Media operations
+    downloadImage: isChinese ? "下载图片" : "Download Image",
+    downloadVideo: isChinese ? "下载视频" : "Download Video",
+    downloadFile: isChinese ? "下载文件" : "Download File",
+    copyAddress: isChinese ? "复制地址" : "Copy Address",
+    openInBrowser: isChinese ? "浏览器打开" : "Open in Browser",
+  };
+
+  // Menu theme configuration
+  const MENU_THEMES = {
+    dark: {
+      menu: {
+        background: "#2d2d2d",
+        border: "1px solid #404040",
+        color: "#ffffff",
+        shadow: "0 4px 16px rgba(0, 0, 0, 0.4)",
+      },
+      item: {
+        divider: "#404040",
+        hoverBg: "#404040",
+      },
+    },
+    light: {
+      menu: {
+        background: "#ffffff",
+        border: "1px solid #e0e0e0",
+        color: "#333333",
+        shadow: "0 4px 16px rgba(0, 0, 0, 0.15)",
+      },
+      item: {
+        divider: "#f0f0f0",
+        hoverBg: "#d0d0d0",
+      },
+    },
+  };
+
+  // Theme detection and menu styles
+  function getTheme() {
+    const prefersDark = window.matchMedia(
+      "(prefers-color-scheme: dark)",
+    ).matches;
+    return prefersDark ? "dark" : "light";
+  }
+
+  function getMenuStyles(theme = getTheme()) {
+    return MENU_THEMES[theme] || MENU_THEMES.light;
+  }
+
+  // Menu configuration constants
+  const MENU_CONFIG = {
+    id: "pake-context-menu",
+    minWidth: "120px", // Compact width for better UX
+    borderRadius: "6px", // Slightly more rounded for modern look
+    fontSize: "13px",
+    zIndex: "999999",
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    // Menu item dimensions
+    itemPadding: "8px 16px", // Increased vertical padding for better comfort
+    itemLineHeight: "1.2",
+    itemBorderRadius: "3px", // Subtle rounded corners for menu items
+    itemTransition: "background-color 0.1s ease",
+  };
+
+  // Create custom context menu
+  function createContextMenu() {
+    const contextMenu = document.createElement("div");
+    contextMenu.id = MENU_CONFIG.id;
+    const styles = getMenuStyles();
+
+    contextMenu.style.cssText = `
+      position: fixed;
+      background: ${styles.menu.background};
+      border: ${styles.menu.border};
+      border-radius: ${MENU_CONFIG.borderRadius};
+      box-shadow: ${styles.menu.shadow};
+      padding: 4px 0;
+      min-width: ${MENU_CONFIG.minWidth};
+      font-family: ${MENU_CONFIG.fontFamily};
+      font-size: ${MENU_CONFIG.fontSize};
+      color: ${styles.menu.color};
+      z-index: ${MENU_CONFIG.zIndex};
+      display: none;
+      user-select: none;
+    `;
+    document.body.appendChild(contextMenu);
+    return contextMenu;
+  }
+
+  function createMenuItem(text, onClick, divider = false) {
+    const item = document.createElement("div");
+    const styles = getMenuStyles();
+
+    item.style.cssText = `
+      padding: ${MENU_CONFIG.itemPadding};
+      cursor: pointer;
+      user-select: none;
+      font-weight: 400;
+      line-height: ${MENU_CONFIG.itemLineHeight};
+      transition: ${MENU_CONFIG.itemTransition};
+      white-space: nowrap;
+      border-radius: ${MENU_CONFIG.itemBorderRadius};
+      margin: 2px 4px;
+      border-bottom: ${divider ? `1px solid ${styles.item.divider}` : "none"};
+    `;
+    item.textContent = text;
+
+    item.addEventListener("mouseenter", () => {
+      item.style.backgroundColor = styles.item.hoverBg;
+    });
+
+    item.addEventListener("mouseleave", () => {
+      item.style.backgroundColor = "transparent";
+    });
+
+    item.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick();
+      hideContextMenu();
+    });
+
+    return item;
+  }
+
+  function showContextMenu(x, y, items) {
+    let contextMenu = document.getElementById(MENU_CONFIG.id);
+
+    // Always recreate menu to ensure theme is up-to-date
+    if (contextMenu) {
+      contextMenu.remove();
+    }
+    contextMenu = createContextMenu();
+
+    items.forEach((item) => {
+      contextMenu.appendChild(item);
+    });
+
+    contextMenu.style.left = x + "px";
+    contextMenu.style.top = y + "px";
+    contextMenu.style.display = "block";
+
+    // Adjust position if menu goes off screen
+    const rect = contextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      contextMenu.style.left = x - rect.width + "px";
+    }
+    if (rect.bottom > window.innerHeight) {
+      contextMenu.style.top = y - rect.height + "px";
+    }
+  }
+
+  function hideContextMenu() {
+    const contextMenu = document.getElementById(MENU_CONFIG.id);
+    if (contextMenu) {
+      contextMenu.style.display = "none";
+    }
+  }
+
+  function downloadImage(imageUrl) {
+    // Convert relative URLs to absolute
+    if (imageUrl.startsWith("/")) {
+      imageUrl = window.location.origin + imageUrl;
+    } else if (imageUrl.startsWith("./")) {
+      imageUrl = new URL(imageUrl, window.location.href).href;
+    } else if (
+      !imageUrl.startsWith("http") &&
+      !imageUrl.startsWith("data:") &&
+      !imageUrl.startsWith("blob:")
+    ) {
+      imageUrl = new URL(imageUrl, window.location.href).href;
+    }
+
+    // Generate filename from URL
+    const filename = getFilenameFromUrl(imageUrl) || "image";
+
+    // Handle different URL types
+    if (isSpecialDownload(imageUrl)) {
+      // Download blob:/data: natively so it works under strict CSP; the Rust
+      // on_download handler saves it to the Downloads folder.
+      triggerNativeDownload(imageUrl, filename);
+    } else {
+      // Regular HTTP(S) image
+      downloadFile(imageUrl, filename);
+    }
+  }
+
+  // Check if element is media (image or video)
+  function getMediaInfo(target) {
+    // Check for img tags
+    if (target.tagName.toLowerCase() === "img") {
+      return { isMedia: true, url: target.src, type: "image" };
+    }
+
+    // Check for video tags
+    if (target.tagName.toLowerCase() === "video") {
+      return {
+        isMedia: true,
+        url: target.src || target.currentSrc,
+        type: "video",
+      };
+    }
+
+    // Check for elements with background images
+    if (target.style && target.style.backgroundImage) {
+      const bgImage = target.style.backgroundImage;
+      const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+      if (urlMatch) {
+        return { isMedia: true, url: urlMatch[1], type: "image" };
+      }
+    }
+
+    // Check for parent elements with background images
+    const parentWithBg =
+      target && typeof target.closest === "function"
+        ? target.closest('[style*="background-image"]')
+        : null;
+    if (parentWithBg) {
+      const bgImage = parentWithBg.style.backgroundImage;
+      const urlMatch = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+      if (urlMatch) {
+        return { isMedia: true, url: urlMatch[1], type: "image" };
+      }
+    }
+
+    return { isMedia: false, url: "", type: "" };
+  }
+
+  // Simplified menu builder
+  function buildMenuItems(type, data) {
+    const items = [];
+
+    switch (type) {
+      case "media":
+        const downloadText =
+          data.type === "image"
+            ? menuTexts.downloadImage
+            : menuTexts.downloadVideo;
+        items.push(
+          createMenuItem(downloadText, () => downloadImage(data.url)),
+          createMenuItem(menuTexts.copyAddress, () =>
+            navigator.clipboard.writeText(data.url),
+          ),
+          createMenuItem(menuTexts.openInBrowser, () =>
+            invoke("plugin:shell|open", { path: data.url }),
+          ),
+        );
+        break;
+
+      case "link":
+        if (data.isFile) {
+          items.push(
+            createMenuItem(menuTexts.downloadFile, () => {
+              const filename = getFilenameFromUrl(data.url);
+              downloadFile(data.url, filename);
+            }),
+          );
+        }
+        items.push(
+          createMenuItem(menuTexts.copyAddress, () =>
+            navigator.clipboard.writeText(data.url),
+          ),
+          createMenuItem(menuTexts.openInBrowser, () =>
+            invoke("plugin:shell|open", { path: data.url }),
+          ),
+        );
+        break;
+    }
+
+    return items;
+  }
+
+  // Handle right-click context menu
+  document.addEventListener(
+    "contextmenu",
+    function (event) {
+      const target = event.target;
+
+      // Check for media elements (images/videos)
+      const mediaInfo = getMediaInfo(target);
+
+      // Check for links (but not if it's media)
+      const linkElement =
+        target && typeof target.closest === "function"
+          ? target.closest("a")
+          : null;
+      const isLink = linkElement && linkElement.href && !mediaInfo.isMedia;
+
+      // Only show custom menu for media or links
+      if (mediaInfo.isMedia || isLink) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        let menuItems = [];
+
+        if (mediaInfo.isMedia) {
+          menuItems = buildMenuItems("media", mediaInfo);
+        } else if (isLink) {
+          const linkUrl = linkElement.href;
+          menuItems = buildMenuItems("link", {
+            url: linkUrl,
+            isFile: isDownloadableFile(linkUrl),
+          });
+        }
+
+        showContextMenu(event.clientX, event.clientY, menuItems);
+      }
+      // For all other elements, let browser's default context menu handle it
+    },
+    true,
+  );
+
+  // Hide context menu when clicking elsewhere
+  document.addEventListener("click", hideContextMenu);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      hideContextMenu();
+    }
+  });
+});
+
+// Bridge the Web Notification + Web Badging APIs to Pake's Rust commands so
+// pages running inside the webview can drive the macOS dock badge (and
+// taskbar badge on Linux/Windows). Installs synchronously instead of waiting
+// for DOMContentLoaded so feature-detection on Notification/setAppBadge
+// returns the polyfill before site scripts run.
+(function () {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return;
+  if (typeof EventTarget !== "function" || typeof Event !== "function") return;
+
+  let NotificationEventTarget = EventTarget;
+  try {
+    new EventTarget();
+  } catch (_) {
+    // Safari before 14 exposes EventTarget but its constructor throws. A
+    // fragment already has native event state and keeps event.target exact.
+    NotificationEventTarget = class extends EventTarget {
+      constructor() {
+        return Object.setPrototypeOf(
+          document.createDocumentFragment(),
+          new.target.prototype,
+        );
+      }
+    };
+  }
+
+  let permVal = "granted";
+  // Pages that drive the badge directly via setAppBadge own its lifecycle;
+  // notifications-driven counts auto-clear on the next user interaction.
+  let pageManagedBadge = false;
+  let autoBadgeActive = false;
+
+  const normalizeBadgeCount = (count) => {
+    if (typeof count !== "number" || !Number.isFinite(count)) {
+      throw new TypeError("Badge count must be a finite number.");
+    }
+    const normalized = Math.floor(count);
+    return normalized > 0 ? Math.min(normalized, 99999) : null;
+  };
+  const setBadge = (count) => {
+    pageManagedBadge = true;
+    autoBadgeActive = false;
+    return invoke("set_dock_badge", { count }).catch(() => {});
+  };
+  const clearBadge = () => invoke("clear_dock_badge").catch(() => {});
+  const setLabel = (label) => {
+    pageManagedBadge = true;
+    autoBadgeActive = false;
+    return invoke("set_dock_badge_label", { label }).catch(() => {});
+  };
+  const incrementAutoBadge = () => {
+    if (pageManagedBadge) return Promise.resolve();
+    autoBadgeActive = true;
+    return invoke("increment_dock_badge").catch(() => {});
+  };
+
+  // Notification click routing.
+  //
+  // On macOS the native center reports which notification was clicked and calls
+  // __pakeNotificationClick with its exact id (see app/notification.rs).
+  // Elsewhere the platform tells us nothing, so we approximate: a window that
+  // regains focus shortly after a notification arrived while it was in the
+  // background is treated as a click on that notification. The approximation is
+  // deliberately narrow -- one shot, time-limited, and cancelled by any in-page
+  // interaction -- because it cannot tell a notification click apart from the
+  // user switching back by hand.
+  const FOCUS_CLICK_WINDOW_MS = 60000;
+  const MAX_TRACKED_NOTIFICATIONS = 200;
+  const liveNotifications = new Map();
+  let notifSeq = 0;
+  let pendingFocusClick = null;
+  let interactionSeq = 0;
+
+  const withdrawNotification = (id) =>
+    invoke("close_notification", { id }).catch((error) => {
+      console.warn("[Pake] Failed to withdraw notification:", error);
+    });
+
+  const forgetNotification = (id) => {
+    liveNotifications.delete(id);
+    if (pendingFocusClick?.id === id) pendingFocusClick = null;
+  };
+
+  const clickNotification = (id) => {
+    const notif = liveNotifications.get(id);
+    if (!notif) return;
+    pendingFocusClick = null;
+    notif.dispatchEvent(new Event("click"));
+  };
+
+  window.addEventListener("focus", () => {
+    interactionSeq++;
+    const pending = pendingFocusClick;
+    pendingFocusClick = null;
+    if (!pending || Date.now() - pending.at > FOCUS_CLICK_WINDOW_MS) return;
+    clickNotification(pending.id);
+  });
+
+  const clearAutoBadge = () => {
+    interactionSeq++;
+    // A real interaction means the user is already reading the page, so a later
+    // focus is an app switch rather than a notification click.
+    pendingFocusClick = null;
+    if (pageManagedBadge || !autoBadgeActive) return;
+    autoBadgeActive = false;
+    clearBadge();
+  };
+  document.addEventListener("click", clearAutoBadge, true);
+  document.addEventListener("keydown", clearAutoBadge, true);
+
+  // A real EventTarget, not a bare object with an onclick slot: pages commonly
+  // register their routing with addEventListener("click"), and the click
+  // handler needs event.target to be the notification it fired for.
+  class PakeNotification extends NotificationEventTarget {
+    constructor(title, options) {
+      super();
+      const opts = options || {};
+      Object.defineProperty(this, "_handlers", {
+        value: new Map(),
+        enumerable: false,
+      });
+
+      this.title = title === undefined ? "" : String(title);
+      this.body = opts.body ?? "";
+      this.tag = opts.tag ?? "";
+      this.data = opts.data ?? null;
+      this.dir = opts.dir ?? "auto";
+      this.lang = opts.lang ?? "";
+      this.silent = opts.silent ?? false;
+      this.requireInteraction = opts.requireInteraction ?? false;
+      this.timestamp = opts.timestamp ?? Date.now();
+
+      let icon = opts.icon || "";
+      if (icon.startsWith("/")) {
+        icon = window.location.origin + icon;
+      }
+      this.icon = icon;
+
+      // Must match the id charset validated in app/notification.rs.
+      const id = `pake-${++notifSeq}-${Math.random().toString(36).slice(2, 10)}`;
+      Object.defineProperty(this, "_id", { value: id, enumerable: false });
+
+      // A new notification with the same tag replaces the previous one, which
+      // must therefore stop being a click target.
+      if (this.tag) {
+        for (const other of liveNotifications.values()) {
+          if (other.tag === this.tag) other.close();
+        }
+      }
+      liveNotifications.set(id, this);
+      while (liveNotifications.size > MAX_TRACKED_NOTIFICATIONS) {
+        liveNotifications.values().next().value.close();
+      }
+
+      const raisedInBackground =
+        typeof document.hasFocus === "function" ? !document.hasFocus() : true;
+      const raisedAt = Date.now();
+      const raisedAfterInteraction = interactionSeq;
+      const sequence = notifSeq;
+      // Clear the older candidate immediately, rather than when this IPC reply
+      // arrives. Replies and native delivery may complete out of order.
+      pendingFocusClick = null;
+
+      invoke("send_notification", {
+        params: {
+          id,
+          title: this.title,
+          body: this.body,
+          icon: this.icon,
+          silent: this.silent,
+        },
+      })
+        .then((outcome) => {
+          if (liveNotifications.get(id) !== this) {
+            // close/replacement may precede native delivery. Withdraw again
+            // after its acknowledgement, using this object's unique id.
+            return withdrawNotification(id);
+          }
+          const unread = raisedAfterInteraction === interactionSeq;
+          // Another window already raised this exact message, so nothing was
+          // shown: no click can arrive, and counting it would multiply the
+          // badge by the number of windows.
+          if (outcome?.suppressed) {
+            forgetNotification(id);
+            // The dock badge is shared, and the window that raised the copy
+            // counted it. Reading here must still clear it.
+            if (unread && !pageManagedBadge) autoBadgeActive = true;
+            return undefined;
+          }
+          if (
+            unread &&
+            sequence === notifSeq &&
+            raisedInBackground &&
+            !outcome?.nativeClick
+          ) {
+            pendingFocusClick = { id, at: raisedAt };
+          }
+          this.dispatchEvent(new Event("show"));
+          if (unread) return incrementAutoBadge();
+        })
+        .catch(() => {
+          if (liveNotifications.get(id) !== this) return;
+          forgetNotification(id);
+          this.dispatchEvent(new Event("error"));
+        });
+    }
+
+    close() {
+      if (liveNotifications.get(this._id) !== this) return;
+      forgetNotification(this._id);
+      withdrawNotification(this._id);
+      // Notification events are tasks. A synchronous close handler can create
+      // another same-tag notification while the constructor is replacing it.
+      setTimeout(() => this.dispatchEvent(new Event("close")), 0);
+    }
+  }
+
+  for (const type of ["click", "close", "show", "error"]) {
+    Object.defineProperty(PakeNotification.prototype, `on${type}`, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this._handlers.get(type) || null;
+      },
+      set(handler) {
+        const previous = this._handlers.get(type);
+        if (previous) this.removeEventListener(type, previous);
+        if (typeof handler === "function") {
+          this._handlers.set(type, handler);
+          this.addEventListener(type, handler);
+        } else {
+          this._handlers.delete(type);
+        }
+      },
+    });
+  }
+
+  PakeNotification.requestPermission = (callback) => {
+    if (typeof callback === "function") callback(permVal);
+    return Promise.resolve(permVal);
+  };
+  Object.defineProperty(PakeNotification, "permission", {
+    enumerable: true,
+    configurable: true,
+    get: () => permVal,
+    set: (v) => {
+      permVal = v;
+    },
+  });
+
+  try {
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      writable: true,
+      value: PakeNotification,
+    });
+  } catch (_) {}
+
+  try {
+    Object.defineProperty(window, "__pakeNotificationClick", {
+      configurable: true,
+      writable: true,
+      value: clickNotification,
+    });
+  } catch (_) {}
+
+  // Web Badging API: https://wicg.github.io/badging/
+  // setAppBadge() with no argument shows an indicator dot; with a number,
+  // shows the count (0 clears). clearAppBadge() removes the badge entirely.
+  const setAppBadge = (count) => {
+    if (count === undefined) return setLabel("•");
+    let normalized;
+    try {
+      normalized = normalizeBadgeCount(count);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (normalized === null) {
+      pageManagedBadge = false;
+      autoBadgeActive = false;
+      return clearBadge();
+    }
+    return setBadge(normalized);
+  };
+  const clearAppBadge = () => {
+    pageManagedBadge = false;
+    autoBadgeActive = false;
+    return clearBadge();
+  };
+  try {
+    Object.defineProperty(navigator, "setAppBadge", {
+      configurable: true,
+      writable: true,
+      value: setAppBadge,
+    });
+    Object.defineProperty(navigator, "clearAppBadge", {
+      configurable: true,
+      writable: true,
+      value: clearAppBadge,
+    });
+  } catch (_) {}
+})();
+
+function setDefaultZoom() {
+  const htmlZoom = window.localStorage.getItem("htmlZoom");
+  if (htmlZoom) {
+    setZoom(htmlZoom);
+  } else if (window.pakeConfig?.zoom && window.pakeConfig.zoom !== 100) {
+    setZoom(`${window.pakeConfig.zoom}%`);
+  }
+}
+
+function getFilenameFromUrl(url) {
+  try {
+    const urlPath = new URL(url).pathname;
+    let filename = urlPath.substring(urlPath.lastIndexOf("/") + 1);
+
+    // If no filename or no extension, generate one
+    if (!filename || !filename.includes(".")) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+      // Detect image type from URL or data URI
+      if (url.startsWith("data:image/")) {
+        // Read only the MIME subtype: stop at ';' (params) or ',' (data),
+        // whichever comes first, so we never fold the encoding/payload into
+        // the extension. Map structured suffixes (svg+xml -> svg) and jpeg.
+        const semicolon = url.indexOf(";");
+        const comma = url.indexOf(",");
+        let end = url.length;
+        if (semicolon !== -1) end = Math.min(end, semicolon);
+        if (comma !== -1) end = Math.min(end, comma);
+        let ext = url.substring(11, end).split("+")[0];
+        if (ext === "jpeg") ext = "jpg";
+        filename = `image-${timestamp}.${ext}`;
+      } else {
+        // Default to common image extensions based on common patterns
+        if (url.includes("jpg") || url.includes("jpeg")) {
+          filename = `image-${timestamp}.jpg`;
+        } else if (url.includes("png")) {
+          filename = `image-${timestamp}.png`;
+        } else if (url.includes("gif")) {
+          filename = `image-${timestamp}.gif`;
+        } else if (url.includes("webp")) {
+          filename = `image-${timestamp}.webp`;
+        } else if (url.includes("svg")) {
+          filename = `image-${timestamp}.svg`;
+        } else {
+          filename = `image-${timestamp}.png`; // default
+        }
+      }
+    }
+
+    return filename;
+  } catch (e) {
+    // Fallback for invalid URLs
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `image-${timestamp}.png`;
+  }
+}

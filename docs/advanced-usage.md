@@ -1,0 +1,306 @@
+# Advanced Usage
+
+<div align="center">
+
+**English** · [中文](advanced-usage_CN.md)
+
+</div>
+
+Customize Pake apps with style modifications, JavaScript injection, and container communication.
+
+## Style Customization
+
+Remove ads or customize appearance by modifying CSS.
+
+**Quick Process:**
+
+1. Run `pnpm run dev` for development
+2. Use DevTools to find elements to modify
+3. Edit `src-tauri/src/inject/style.js`:
+
+```javascript
+const css = `
+  .ads-banner { display: none !important; }
+  .header { background: #1a1a1a !important; }
+`;
+```
+
+## JavaScript Injection
+
+Add custom functionality like keyboard shortcuts.
+
+**Implementation:**
+
+1. Edit `src-tauri/src/inject/event.js`
+2. Add event listeners:
+
+```javascript
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "k") {
+    // Custom action
+  }
+});
+```
+
+## Built-in Features
+
+### Download Error Notifications
+
+When a download fails, Pake shows a notification in Chinese or English based on the browser language. It covers regular HTTP(S), Data URI (base64 encoded files), Blob URL (dynamically generated files) and context menu downloads, uses native OS notifications once permission is granted, and falls back to console logging otherwise. To enable notifications, request permission in your injected JavaScript:
+
+```javascript
+// Request notification permission on app start
+if (window.Notification && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+```
+
+## Container Communication
+
+Send messages between web content and Pake container.
+
+Native IPC is available to bundled local pages and the exact configured website origin (scheme, host, and port). Login redirects and other origins do not receive native permissions. Use the final website URL when packaging an app, including its `www` or workspace subdomain. On other origins, native notifications, zoom, Pake's fullscreen controls, dragging the window by its hidden title bar, and opening links in the system browser are unavailable; downloads fall back to the browser, which may display cross-origin media instead of saving it. Custom commands must be registered in both `generate_handler!` and the command manifest in `src-tauri/build.rs`, with the corresponding permission added to `src-tauri/capabilities/default.json`.
+
+**Web Side (JavaScript):**
+
+```javascript
+window.__TAURI__.core.invoke("handle_scroll", {
+  scrollY: window.scrollY,
+  scrollX: window.scrollX,
+});
+```
+
+**Container Side (Rust):**
+
+```rust
+#[tauri::command]
+fn handle_scroll(scroll_y: f64, scroll_x: f64) {
+  println!("Scroll: {}, {}", scroll_x, scroll_y);
+}
+```
+
+## Window Configuration
+
+Configure window properties in `pake.json`:
+
+```json
+{
+  "windows": [
+    {
+      "width": 1200,
+      "height": 780,
+      "fullscreen": false,
+      "resizable": true,
+      "hide_title_bar": true
+    }
+  ]
+}
+```
+
+`hide_title_bar` is the `pake.json` key (the CLI exposes it as `--hide-title-bar`). It is macOS only and ignored on Windows and Linux, which use `hide_window_decorations` (`--hide-window-decorations`) for frameless windows instead.
+
+## Static File Packaging
+
+Package local HTML/CSS/JS files:
+
+```bash
+# A whole directory of static files (must contain index.html at its root),
+# e.g. the dist/ output of a web build. The full tree is packaged.
+pake ./dist --name my-tool
+
+# A single HTML file; add --use-local-file to also copy its sibling files
+pake ./my-app/index.html --name my-static-app --use-local-file
+```
+
+Hash-based routing works out of the box; history-mode SPA routing is not yet supported for local packaging. Single-file packaging requires Pake CLI >= 3.0.0; directory packaging requires >= 3.15.0.
+
+## macOS Media Permissions
+
+By default, apps built with Pake do not request camera or microphone access. For sites that require these (for example, video conferencing or voice input), pass the relevant flags at build time:
+
+```bash
+pake https://chatgpt.com --name ChatGPT --microphone
+pake https://meet.google.com --name GoogleMeet --camera --microphone
+```
+
+- `--microphone`: grants microphone access (`com.apple.security.device.audio-input`)
+- `--camera`: grants camera access (`com.apple.security.device.camera`)
+
+macOS prompts the user for permission on first use, so add these flags only for sites that need them.
+
+## Multiple Apps For The Same Site
+
+If you need separate apps for the same site, for example two Gmail accounts with different login state, build them with different app names:
+
+```bash
+pake https://mail.google.com --name "Gmail Work"
+pake https://mail.google.com --name "Gmail Personal"
+```
+
+Pake generates a different app identifier for each `URL + name` pair, so these apps install as separate desktop apps instead of resolving to the same app. To pin the bundle identifier explicitly, use the hidden `--identifier` option:
+
+```bash
+pake https://mail.google.com --name "Gmail Work" --identifier com.example.gmail.work
+```
+
+`--multi-instance` is different. It only allows multiple processes for the same packaged app, it does not create separate app identities.
+
+## Project Structure
+
+```tree
+├── bin/                    # CLI source code (TypeScript)
+│   ├── builders/          # Platform-specific packaging builders
+│   ├── helpers/           # Helper utilities and config merging
+│   ├── options/           # CLI option processing
+│   └── utils/             # Dependency detection, workspace, and environment
+├── docs/                  # Project documentation
+├── src-tauri/             # Tauri application core (Rust)
+│   ├── src/
+│   │   ├── app/           # Core modules (window, menu, shortcuts, etc.)
+│   │   ├── inject/        # Injected scripts (CSS, JS, event listeners)
+│   │   └── lib.rs         # Application entry point
+│   ├── icons/             # macOS icons (.icns)
+│   ├── png/               # Windows/Linux icons (.ico, .png)
+│   ├── pake.json          # Runtime configuration template
+│   └── tauri.*.conf.json  # Platform-specific configs
+├── scripts/               # Build and utility scripts
+└── tests/                 # Test suites
+```
+
+## Development Workflow
+
+### Prerequisites
+
+- Node.js ≥22 (recommended LTS, minimum ≥20.9.0)
+- Rust ≥1.85.0 (recommended stable)
+
+#### Platform-Specific Requirements
+
+**macOS:**
+
+- Xcode Command Line Tools: `xcode-select --install`
+
+**Windows:**
+
+- **CRITICAL**: Consult [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) before proceeding
+- Windows 10 SDK (10.0.19041.0) and Visual Studio Build Tools 2022 (≥17.2)
+- Required redistributables:
+  1. Microsoft Visual C++ 2015-2022 Redistributable (x64)
+  2. Microsoft Visual C++ 2015-2022 Redistributable (x86)
+  3. Microsoft Visual C++ 2012 Redistributable (x86) (optional)
+  4. Microsoft Visual C++ 2013 Redistributable (x86) (optional)
+  5. Microsoft Visual C++ 2008 Redistributable (x86) (optional)
+
+- **Windows ARM (ARM64) support**: In Visual Studio Installer, under Individual Components, select MSVC v143 - VS 2022 C++ ARM64 build tools
+
+**Linux (Ubuntu):**
+
+```bash
+sudo apt install libdbus-1-dev \
+    libsoup-3.0-dev \
+    libjavascriptcoregtk-4.1-dev \
+    libwebkit2gtk-4.1-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libxdo-dev \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    gnome-video-effects \
+    gnome-video-effects-extra \
+    libglib2.0-dev \
+    pkg-config
+```
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/tw93/Pake.git
+cd Pake
+
+# Install dependencies
+pnpm install
+
+# Start development
+pnpm run dev
+```
+
+### Development Commands
+
+1. **CLI Changes**: Edit files in `bin/`, then run `pnpm run cli:build`
+2. **Core App Changes**: Edit files in `src-tauri/src/`, then run `pnpm run dev`
+3. **Injection Logic**: Modify files in `src-tauri/src/inject/` for web customizations
+4. **Testing**: Run `pnpm test` for comprehensive validation
+
+#### Command Reference
+
+- **Dev mode**: `pnpm run dev` (hot reload)
+- **Build**: `pnpm run build`
+- **Debug build**: `pnpm run build:debug`
+- **CLI build**: `pnpm run cli:build`
+
+#### CLI Development
+
+For CLI development with hot reloading, run:
+
+```bash
+pnpm run cli:dev
+```
+
+This script builds the CLI in watch mode, runs it with the arguments you pass, then starts `tauri dev` for that app, with hot updates for `pake-cli` code changes.
+
+### Testing Guide
+
+#### Running Tests
+
+```bash
+# Complete test suite (recommended)
+pnpm test                   # Build the CLI, run the Vitest suite, then run real build + release workflow smoke tests
+
+# Skip the real build and release workflow smoke tests
+pnpm test -- --no-build
+
+# Run the fast Vitest suite only
+npx vitest run
+
+# Build the CLI explicitly
+pnpm run cli:build
+
+# Run the release workflow smoke test directly
+node ./tests/release.js
+```
+
+#### Test Details
+
+`pnpm test` runs the main test runner in [`tests/index.js`](../tests/index.js). It builds the CLI, runs the Vitest suite (unit, integration, builder and CLI option coverage), runs the platform-aware real build smoke test unless `--no-build` is passed, and then, if the real build succeeds, runs the release workflow smoke test that covers the popular apps build path.
+
+Useful optional flags:
+
+- `--no-unit`: skip unit tests
+- `--no-integration`: skip integration tests
+- `--no-builder`: skip builder tests
+- `--no-build`: skip the real build smoke test and the follow-up release workflow smoke test
+- `--e2e`: add end-to-end configuration tests
+- `--pake-cli`: add GitHub Actions related checks
+
+#### Troubleshooting
+
+- **CLI file not found**: Run `pnpm run cli:build`
+- **Test timeout**: Build tests require extended time to complete
+- **Build failures**: Check Rust toolchain with `rustup update`
+- **Permission errors**: Ensure write permissions are available
+
+### Common Build Issues
+
+- **Rust compilation errors**: Run `cargo clean` in `src-tauri/` directory
+- **Node dependency issues**: Delete `node_modules` and run `pnpm install`
+- **Permission errors on macOS**: Run `sudo xcode-select --reset`
+
+## Links
+
+- [CLI Documentation](cli-usage.md)
+- [GitHub Discussions](https://github.com/tw93/Pake/discussions)

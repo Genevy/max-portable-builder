@@ -1,0 +1,739 @@
+# CLI Usage Guide
+
+<div align="center">
+
+**English** · [中文](cli-usage_CN.md)
+
+</div>
+
+Complete command-line reference and basic usage for Pake CLI.
+
+## Installation
+
+**Recommended (pnpm):**
+
+```bash
+pnpm install -g pake-cli
+```
+
+**Alternative (npm):**
+
+```bash
+npm install -g pake-cli
+```
+
+**If you encounter permission issues:**
+
+```bash
+# Use npx to run without global installation
+npx pake-cli [url] [options]
+
+# Or fix npm permissions permanently
+npm config set prefix ~/.npm-global
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Prerequisites:**
+
+- Node.js ≥20.9.0
+- Rust ≥1.85.0 (prompts to install if missing; non-interactive and `--json` runs fail with `ENV_MISSING` instead)
+- **macOS/Linux**: `curl`, `wget`, `file` and `tar` used for dependency management
+
+## Quick Start
+
+```bash
+# Basic usage, fetches the website icon automatically
+pake https://github.com --name "GitHub"
+
+# Advanced usage, custom options
+pake https://weekly.tw93.fun --name "Weekly" --icon https://cdn.tw93.fun/pake/weekly.icns --width 1200 --height 800 --hide-title-bar
+
+# Complete example, multiple options combined
+pake https://github.com --name "GitHub Desktop" --width 1400 --height 900 --show-system-tray --debug
+```
+
+## CLI Usage
+
+```bash
+pake [url] [options]
+```
+
+The packaged application will be located in the current working directory by default. The first build sets up the environment and takes longer, later builds are fast.
+
+> **macOS Output**: On macOS, Pake creates DMG installers by default. To create `.app` bundles for testing (to avoid user interaction), set the environment variable `PAKE_CREATE_APP=1`. If you want Pake to install the app directly into `/Applications`, use `--install`, which builds an `.app`, copies it into `/Applications`, and removes the local bundle after a successful install.
+>
+> **Rust**: Packaging requires Rust. If it is missing, you will be asked whether to install it, and if installation fails or times out, you can [install it manually](https://www.rust-lang.org/tools/install).
+
+### [url]
+
+The URL is the link to the web page you want to package, the path to a local HTML file, or the path to a directory of static web files containing an `index.html` at its root (e.g. a `dist/` build output). Mandatory unless a `--config` file provides `url`.
+
+Web apps remember the main window’s full URL when closed or quit and reopen it on the next launch. The packaged URL remains the home address and is used when no saved URL is available. Incognito apps and local HTML apps do not save or restore URLs.
+
+```shell
+pake https://example.com --name Example
+pake ./page.html --name MyPage
+pake ./dist --name MyTool
+```
+
+For local packaging, hash-based routing works out of the box; history-mode SPA routing is not yet supported.
+
+### [options]
+
+The table lists the common options, `pake --help` shows every option, and each one is documented in full below.
+
+| Option                      | Description                                         | Example                                        |
+| --------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| `--name`                    | Application name                                    | `--name "Weekly"`                              |
+| `--icon`                    | Custom icon (optional, auto-fetch website icon)     | `--icon https://cdn.tw93.fun/pake/weekly.icns` |
+| `--width`                   | Window width (default: 1200px)                      | `--width 1400`                                 |
+| `--height`                  | Window height (default: 780px)                      | `--height 900`                                 |
+| `--hide-title-bar`          | Immersive header (macOS only)                       | `--hide-title-bar`                             |
+| `--hide-window-decorations` | Hide native window decorations (Windows/Linux only) | `--hide-window-decorations`                    |
+| `--debug`                   | Enable development tools                            | `--debug`                                      |
+| `--config`                  | Load options from a JSON config file                | `--config app.json`                            |
+| `--json`                    | Machine-readable result on stdout (for automation)  | `--json`                                       |
+| `--help`                    | Show all CLI options                                | `--help`                                       |
+| `--version`                 | Show CLI version                                    | `--version`                                    |
+
+#### [name]
+
+Specify the application name. If not provided, you will be prompted to enter it. English names work best, and names with spaces are handled per platform:
+
+- **Windows/macOS**: Preserves spaces and case (e.g., `"Google Translate"`)
+- **Linux**: Converts to lowercase with hyphens (e.g., `"google-translate"`)
+
+```shell
+--name <string>
+--name MyApp
+
+# Multiple words (if needed):
+--name "Google Translate"
+```
+
+#### [identifier]
+
+Set the bundle identifier explicitly. By default Pake derives `com.pake.a<hash>` from the URL and `--name`, so two apps wrapping the same URL under different names install separately. The value must start with a letter, contain only letters, digits, hyphens and dots, and end with a letter or digit.
+
+```shell
+--identifier com.example.gmail.work
+```
+
+#### [icon]
+
+**Optional parameter**: If not provided, Pake will automatically fetch the website's icon and convert to the appropriate format. For custom icons, visit [icon-icons](https://icon-icons.com) or [macOSicons](https://macosicons.com/#/).
+
+Supports both local and remote files, automatically converts to platform-specific formats:
+
+- macOS: `.icns` format
+- Windows: `.ico` format
+- Linux: `.png` format
+
+```shell
+--icon <path>
+
+# Examples:
+# Without --icon parameter, auto-fetch website icon
+pake https://github.com --name GitHub
+
+# With custom icons
+--icon ./my-icon.png
+--icon https://cdn.tw93.fun/pake/weekly.icns  # Remote icon (.icns for macOS)
+```
+
+#### [width]
+
+Set the width of the application window. Default is `1200px`.
+
+```shell
+--width <number>
+```
+
+#### [height]
+
+Set the height of the application window. Default is `780px`.
+
+```shell
+--height <number>
+```
+
+#### [min-width]
+
+Set the minimum width that the window can be resized to. Keeps layouts usable when the window is dragged small.
+
+```shell
+--min-width <number>
+```
+
+#### [min-height]
+
+Set the minimum height that the window can be resized to. Prevents UI breakage caused by very short windows.
+
+```shell
+--min-height <number>
+```
+
+#### [zoom]
+
+Set initial page zoom level as an integer between 50 and 200. Default is `100`. Users can still adjust with `Cmd/Ctrl +/-/0` shortcuts.
+
+```shell
+--zoom <number>
+--zoom 80   # 80%
+--zoom 120  # 120%
+```
+
+#### [hide-title-bar]
+
+Enable or disable immersive header. Default is `false`. Use the following command to enable this feature, macOS only.
+
+```shell
+--hide-title-bar
+```
+
+#### [hide-window-decorations]
+
+Hide the native window decorations on Windows and Linux. Default is `false`. This removes the title bar and window controls, then adds a top drag region for moving the window. Use `F11` to toggle native fullscreen. Ignored on macOS.
+
+```shell
+--hide-window-decorations
+```
+
+#### [fullscreen]
+
+Determine whether the application launches in full screen. Default is `false`. Use the following command to enable full screen.
+
+```shell
+--fullscreen
+```
+
+#### [maximize]
+
+Determine whether the application launches with a maximized window. Default is `false`. Use the following command to enable maximize.
+
+```shell
+--maximize
+```
+
+#### [activation-shortcut]
+
+Set the activation shortcut for the application. Default is empty, so it does not take effect. You can customize the activation shortcut with the following commands, e.g. `CmdOrControl+Shift+P`. Usage can refer to [available-modifiers](https://www.electronjs.org/docs/latest/api/accelerator#available-modifiers).
+
+```shell
+--activation-shortcut <string>
+```
+
+#### [always-on-top]
+
+Sets whether the window is always at the top level, defaults to `false`.
+
+```shell
+--always-on-top
+```
+
+#### [app-version]
+
+Set the version number of the packaged application to be consistent with the naming format of version in package.json, defaulting to `1.0.0`.
+
+```shell
+--app-version <string>
+```
+
+#### [dark-mode]
+
+Force packaging applications using dark mode (supports macOS, Windows, and Linux), default is `false`.
+
+```shell
+--dark-mode
+```
+
+On Linux this goes through WebKitGTK, so whether a page renders dark also depends on the WebKitGTK build honoring the window theme and the site implementing `prefers-color-scheme: dark`.
+
+#### [disabled-web-shortcuts]
+
+Sets whether to disable web shortcuts in the original Pake container, defaults to `false`.
+
+```shell
+--disabled-web-shortcuts
+```
+
+#### [enable-find]
+
+Enable Pake's in-page Find UI. Default is `false`. When enabled, users can press `Cmd/Ctrl+F` to open Find, `Cmd/Ctrl+G` to jump to the next match, and `Cmd/Ctrl+Shift+G` to jump to the previous match.
+
+```shell
+--enable-find
+```
+
+#### [force-internal-navigation]
+
+Keeps every clicked link (even pointing to other domains) inside the Pake window instead of letting the OS open an external browser or helper. Default is `false`.
+
+```shell
+--force-internal-navigation
+```
+
+#### [internal-url-regex]
+
+Set a regex pattern to determine which URLs should be considered internal (opened within the app). When set, this pattern takes precedence over the default domain-based matching. Useful when you want to limit internal navigation to specific paths on a domain.
+
+```shell
+--internal-url-regex <pattern>
+
+# Example: Only treat facebook.com/messages paths as internal
+--internal-url-regex "^https://www\\.facebook\\.com/messages(/.*)?$"
+
+# Example: Only treat specific subdomains as internal
+--internal-url-regex "^https://(app|api)\\.example\\.com"
+```
+
+#### [safe-domain]
+
+A simpler way to keep trusted domains and their subdomains inside the app. This is useful for workspace callbacks and enterprise SSO flows, for example Slack plus Okta. Pake compiles this list into `internal_url_regex`; if `--internal-url-regex` is also set, the explicit regex wins.
+
+`--safe-domain` matches URL hosts only, not arbitrary path or query text.
+
+```shell
+--safe-domain <domains>
+
+# Keep Slack and Okta auth redirects inside the app
+--safe-domain slack.com,okta.com
+```
+
+#### [multi-arch]
+
+Package the application to support both Intel and M1 chips, exclusively for macOS. Default is `false`.
+
+##### Prerequisites
+
+- After enabling this option, Rust must be installed using rustup from the official Rust website. Installation via brew is not supported.
+- For Intel chip users, install the arm64 cross-platform package to support M1 chips using the following command:
+
+  ```shell
+  rustup target add aarch64-apple-darwin
+  ```
+
+- For M1 chip users, install the x86 cross-platform package to support Intel chips using the following command:
+
+  ```shell
+  rustup target add x86_64-apple-darwin
+  ```
+
+##### Usage
+
+```shell
+--multi-arch
+```
+
+#### [targets]
+
+Specify the build target architecture or format:
+
+- **Linux**: `deb`, `appimage`, `rpm`, `zst`, `deb-arm64`, `appimage-arm64`, `rpm-arm64`, `zst-arm64` (default: distro-aware, `deb, appimage` on Debian/Ubuntu and `rpm, appimage` on Fedora/RHEL/Oracle/Rocky/Alma/openSUSE)
+- **Windows**: `x64`, `arm64` (auto-detects if not specified)
+- **macOS**: `intel`, `apple`, `universal` (architecture, auto-detects if not specified); `app`, `dmg` (output format, default: `dmg`)
+
+```shell
+--targets <target>
+
+# Examples:
+--targets arm64          # Windows ARM64
+--targets x64            # Windows x64
+--targets universal      # macOS Universal (Intel + Apple Silicon)
+--targets apple          # macOS Apple Silicon only
+--targets intel          # macOS Intel only
+--targets app            # macOS app bundle only (.app, skips the DMG step)
+--targets dmg            # macOS DMG installer (default)
+--targets deb            # Linux DEB package (x64)
+--targets rpm            # Linux RPM package (x64)
+--targets appimage       # Linux AppImage (x64)
+--targets zst            # Linux Arch package (x64 .pkg.tar.zst)
+--targets deb-arm64      # Linux DEB package (ARM64)
+--targets rpm-arm64      # Linux RPM package (ARM64)
+--targets appimage-arm64 # Linux AppImage (ARM64)
+--targets zst-arm64      # Linux Arch package (ARM64 .pkg.tar.zst)
+```
+
+**Note for Linux ARM64**:
+
+- Cross-compilation requires additional setup. Install `gcc-aarch64-linux-gnu` and configure environment variables for cross-compilation.
+- ARM64 support enables Pake apps to run on ARM-based Linux devices, including Linux phones (postmarketOS, Ubuntu Touch), Raspberry Pi, and other ARM64 Linux systems.
+- Use `--target appimage-arm64` for portable ARM64 applications that work across different ARM64 Linux distributions.
+- Use `--targets zst` on Arch Linux based distributions to produce a `.pkg.tar.zst` package directly. Pake follows Tauri's AUR packaging guidance by building the Linux package payload first, then emitting Arch package metadata and zstd-compressed output. Requires `binutils` (for `ar`) and `libarchive` (for `bsdtar`).
+
+#### [windows-toolchain]
+
+Select the Rust toolchain used for Windows builds. Windows only; ignored on other platforms.
+
+- `msvc` (default): Tauri's recommended toolchain. Requires [Visual Studio Build Tools](https://tauri.app/start/prerequisites/#windows) with the "Desktop development with C++" workload.
+- `gnu`: builds against a MinGW/MSYS2 toolchain instead, for machines that have Rust and a GNU toolchain (e.g. via [MSYS2](https://www.msys2.org/)) but not Visual Studio Build Tools. Only `x64` is supported (MSYS2 does not ship an ARM64 GCC toolchain for this target). Requires `gcc`, `ld` and `dlltool` on `PATH`.
+
+```shell
+--windows-toolchain <msvc|gnu>
+
+# Example: build with MinGW/MSYS2 instead of MSVC
+--windows-toolchain gnu
+```
+
+If no MSVC Build Tools are detected and a GNU toolchain is available, Pake logs a hint to retry with `--windows-toolchain gnu` rather than failing deep in the build with an unexplained linker error. Requesting `gnu` does not change your default Rust toolchain or any global `rustup`/environment settings; it only affects the current build subprocess.
+
+With `gnu`, the executable loads `WebView2Loader.dll` at runtime instead of linking it statically as MSVC does. The MSI already includes it, and `--keep-binary` copies it next to `AppName.exe`; keep the two files together or the raw binary will not start.
+
+#### [no-bundle]
+
+Skip packaging and output only the compiled executable. Linux only. Useful on RPM-based distros (Fedora, RHEL, Oracle Linux, etc.) where the native bundler can abort during the packaging stage, so you still get a runnable binary.
+
+```shell
+pake https://github.com --name GitHub --no-bundle
+```
+
+The raw executable is copied to the current directory as `<name>-binary`. On platforms other than Linux this flag is ignored.
+
+#### [user-agent]
+
+Customize the browser user agent. Default is empty.
+
+```shell
+--user-agent <string>
+```
+
+#### [show-system-tray]
+
+Display the application in system tray. Default is `false`.
+
+```shell
+--show-system-tray
+```
+
+#### [system-tray-icon]
+
+Specify the system tray icon. This is only effective when the system tray is enabled. The icon must be in `.ico` or `.png` format and should be an image with dimensions ranging from 32x32 to 256x256 pixels.
+
+```shell
+--system-tray-icon <path>
+```
+
+#### [hide-on-close]
+
+Hide window instead of closing the application when clicking close button. Platform-specific default: `true` for macOS, `false` for Windows/Linux.
+
+```shell
+# Hide on close (default behavior on macOS)
+--hide-on-close
+--hide-on-close true
+
+# Close application immediately (default behavior on Windows/Linux)
+--hide-on-close false
+```
+
+#### [start-to-tray]
+
+Start the application minimized to system tray instead of showing the window. Must be used with `--show-system-tray`. Default is `false`.
+
+```shell
+--start-to-tray
+
+# Example: Start hidden to tray (must use with --show-system-tray)
+pake https://github.com --name GitHub --show-system-tray --start-to-tray
+```
+
+Double-click the tray icon to show or hide the window. Without `--show-system-tray`, this option is ignored.
+
+#### [title]
+
+Set the window title bar text. macOS shows no title if not specified; Windows/Linux fallback to app name.
+
+```shell
+--title <string>
+
+# Examples:
+--title "My Application"
+--title "Google Translate"
+```
+
+#### [no-restore-last-url]
+
+Web apps restore the main window's last URL by default. Use this option to open the packaged URL on every launch while keeping cookies, local storage, and login sessions. In a `--config` JSON file, set `"restoreLastUrl": false`. Incognito sessions and local pages do not restore URLs.
+
+```shell
+pake https://www.rememberthemilk.com --name RememberTheMilk --no-restore-last-url
+```
+
+#### [incognito]
+
+Launch the application in incognito/private browsing mode. Default is `false`. When enabled, the webview will run in private mode, which means it won't store cookies, local storage, or browsing history. This is useful for privacy-sensitive applications.
+
+```shell
+--incognito
+```
+
+#### [password-autosave]
+
+Enable native WebView2 password-save prompts on Windows. Passwords are stored in the packaged app's own WebView2 profile and are not shared with Chrome or Edge. This option is ignored on macOS and Linux, and is disabled when `--incognito` is enabled. Default is `false`. Disabling it stops new saves and save/update prompts; existing saved passwords may still autofill, including in an InPrivate window using the same profile.
+
+```bash
+--password-autosave
+```
+
+#### [wasm]
+
+Enable WebAssembly support with cross-origin isolation headers. Required for Flutter Web applications and other web applications that use WebAssembly modules like `sqlite3.wasm`, `canvaskit.wasm`. Default is `false`.
+
+This option adds necessary HTTP headers (`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`) and browser flags to enable SharedArrayBuffer and WebAssembly features.
+
+```shell
+--wasm
+
+# Example: Package a Flutter Web app with WASM support
+pake https://flutter.dev --name FlutterApp --wasm
+```
+
+#### [enable-drag-drop]
+
+Enable native drag and drop functionality within the application. Default is `false`. When enabled, allows drag and drop operations like reordering items, file uploads, and other interactive drag behaviors that work in regular browsers.
+
+```shell
+--enable-drag-drop
+
+# Example: Package an app that requires drag-drop functionality
+pake https://planka.example.com --name PlankApp --enable-drag-drop
+```
+
+#### [keep-binary]
+
+Keep the raw binary file alongside the installer. Default is `false`. When enabled, also outputs a standalone executable that can run without installation.
+
+```shell
+--keep-binary
+
+# Example: Package app with both installer and standalone binary
+pake https://github.com --name GitHub --keep-binary
+```
+
+**Output**: Creates both installer and standalone executable (`AppName-binary` on Unix, `AppName.exe` on Windows). With `--windows-toolchain gnu`, `WebView2Loader.dll` is copied next to `AppName.exe` as well.
+
+#### [iterative-build]
+
+macOS only: build the `.app` and skip DMG packaging, good for debugging. Default is `false`.
+
+```shell
+--iterative-build
+```
+
+#### [install]
+
+Install the built macOS app directly into `/Applications`. Default is `false`.
+
+This option is macOS-only and is intended for local development or quick testing. When enabled, Pake builds an `.app` bundle, copies it into `/Applications`, replaces any existing app with the same name, and removes the local bundle after a successful install. If the install fails, the local `.app` is kept in the current working directory.
+
+```shell
+--install
+
+# Example: Build and install directly to /Applications
+pake https://github.com --name GitHub --install
+```
+
+#### [camera]
+
+Request camera access on macOS by adding the `com.apple.security.device.camera` entitlement to the packaged app. Default is `false`. macOS only; ignored on Windows and Linux. Useful for web apps that need webcam access, such as video calls or QR scanning.
+
+```shell
+--camera
+
+# Example: Package a video-call site with camera access
+pake https://meet.google.com --name Meet --camera
+```
+
+#### [microphone]
+
+Request microphone access on macOS by adding the `com.apple.security.device.audio-input` entitlement to the packaged app. Default is `false`. macOS only; ignored on Windows and Linux.
+
+```shell
+--microphone
+
+# Example: Combine camera and microphone for a conferencing app
+pake https://meet.google.com --name Meet --camera --microphone
+```
+
+#### [multi-instance]
+
+Allow the packaged app to run more than one instance at the same time. Default is `false`, which means launching a second instance simply focuses the existing window. Enable this when you need to open several windows of the same app simultaneously.
+
+```shell
+--multi-instance
+
+# Example: Allow multiple chat windows
+pake https://chat.example.com --name ChatApp --multi-instance
+```
+
+#### [multi-window]
+
+Allow opening multiple windows within a single running app instance. Default is `false`.
+
+This is different from `--multi-instance`:
+
+- `--multi-instance`: starts multiple app processes.
+- `--multi-window`: keeps one process and opens extra windows from that process.
+
+When enabled, relaunching an already running app opens a new window instead of only focusing the existing one.
+
+On macOS, additional windows opened with Cmd+N join the app's native tab group. Web-auth and `window.open` popups remain separate.
+
+This can improve popup-based authentication flows, but it cannot bypass provider policy. Some providers, especially Google, may still reject sign-in inside embedded webviews.
+
+```shell
+--multi-window
+
+# Example: Keep one process but open multiple windows
+pake https://chat.example.com --name ChatApp --multi-window
+```
+
+#### [installer-language]
+
+Set the Windows Installer language. Options include `zh-CN`, `ja-JP`, More at [Tauri docs](https://v2.tauri.app/distribute/windows-installer/#internationalization). Default is `en-US`.
+
+```shell
+--installer-language <language>
+```
+
+#### [use-local-file]
+
+Enable recursive copying. When the URL is a local file path, enabling this option will copy the folder containing the file specified in the URL, as well as all sub-files, to the Pake static folder. This is disabled by default.
+
+Directory inputs (`pake ./dist`) always package the full tree; this flag only affects single-HTML-file inputs.
+
+```shell
+--use-local-file
+
+# Basic static file packaging
+pake ./my-app/index.html --name "my-app" --use-local-file
+```
+
+#### [inject]
+
+Using `inject`, you can inject local absolute and relative path `css` and `js` files into the page you specify the `url` to customize it. For example, an adblock script that can be applied to any web page, or a `css` that optimizes the `UI` of a page, you can write it once to customize it. would only need to write the `app` once to generalize it to any other page.
+
+Supports both comma-separated and multiple option formats:
+
+```shell
+# Comma-separated (recommended)
+--inject ./tools/style.css,./tools/hotkey.js
+
+# Multiple options
+--inject ./tools/style.css --inject ./tools/hotkey.js
+
+# Single file
+--inject ./tools/style.css
+```
+
+#### [download-dir]
+
+Choose where the packaged app saves downloads. Both regular link downloads and native browser downloads use this directory; the default is the system Downloads folder.
+
+```bash
+pake https://example.com --name MyApp --download-dir '~/Documents/MyApp'
+```
+
+Use an absolute path (such as `C:\Users\Alice\Documents\MyApp` on Windows) or a quoted `~/path`. Quoting preserves `~` so it resolves to the app user's home when the app runs, rather than the build machine's home. Missing directories are created on the first download. Relative paths are rejected; an inaccessible directory causes the download to fail without silently saving elsewhere. The equivalent JSON config field is `downloadDir`. Rebuild an existing app to change its download directory.
+
+#### [proxy-url]
+
+Set proxy server for all network requests. Supports HTTP, HTTPS, and SOCKS5. Available on Windows and Linux. On macOS, requires macOS 14+.
+
+```shell
+--proxy-url http://127.0.0.1:7890
+--proxy-url socks5://127.0.0.1:7891
+```
+
+#### [basic-auth]
+
+Prompt for HTTP Basic credentials when the target site requests them. This is only needed on macOS, where WKWebView does not provide its own 401 login dialog. Credentials are entered in the packaged app at runtime and are kept only for the current session.
+
+```shell
+--basic-auth
+```
+
+#### [debug]
+
+Enable developer tools and detailed logging for debugging.
+
+```shell
+--debug
+```
+
+#### [config]
+
+Load options from a declarative JSON config file instead of assembling flags. Fields are the camelCase CLI option names plus `url`; the published schema is [schema/pake.schema.json](../schema/pake.schema.json). An explicit CLI flag always wins over a config field. Unknown fields, wrong types, and out-of-range numbers fail fast. A relative `url` path resolves against the current working directory, not the config file's location. Invocation flags (`--json`, `--config`, `--version`) are CLI-only and rejected inside the file.
+
+```shell
+--config <path>
+
+# app.json
+# {
+#   "$schema": "https://raw.githubusercontent.com/tw93/Pake/main/schema/pake.schema.json",
+#   "url": "https://example.com",
+#   "name": "MyApp",
+#   "width": 1280,
+#   "hideTitleBar": true
+# }
+pake --config app.json
+```
+
+#### [json]
+
+Machine-readable mode for scripts and AI agents. All logs move to stderr and stdout carries exactly one JSON result object; interactive prompts are disabled (they are also disabled whenever stdin is not a TTY).
+
+```shell
+--json
+
+# Success (stdout):
+# {"ok":true,"name":"MyApp","platform":"darwin","arch":"arm64",
+#  "outputs":[{"path":"/abs/MyApp.dmg","sizeBytes":5242880,"format":"dmg"}],
+#  "warnings":[],"error":null}
+#
+# Failure (stdout):
+# {"ok":false, ..., "error":{"code":"ENV_MISSING","message":"...","hint":"..."}}
+```
+
+Exit codes: `0` success, `2` invalid input, `3` build failure, `4` missing environment or dependency setup failure (e.g. Rust not installed, package install failed), `1` unexpected error. Error codes: `INVALID_INPUT`, `ENV_MISSING`, `BUILD_FAILED`, `UNEXPECTED`, plus `NETWORK` (reserved; current versions report network failures under the phase code).
+
+On Linux multi-target builds (e.g. `--targets deb,appimage`), `ok` can be true with fewer `outputs` than requested: a target that fails while others succeed is reported in `warnings`, not as a failure. Check `outputs[].format` against the formats you asked for.
+
+#### [ignore-certificate-errors]
+
+Ignore TLS certificate validation errors when loading the target URL. Useful for intranet apps, dev servers, or self-signed certificates.
+
+```shell
+--ignore-certificate-errors
+```
+
+#### [new-window]
+
+Allow sites to open new windows, such as authentication popups, extra tabs, or branch views.
+
+This can help sites that rely on popup auth windows, but it does not guarantee in-app sign-in. Some providers, especially Google, may block authentication inside embedded webviews regardless of this option.
+
+```shell
+--new-window
+```
+
+## Docker
+
+```shell
+# Run the Pake CLI via Docker (AppImage builds need FUSE access)
+docker run --rm --privileged \
+    --device /dev/fuse \
+    --security-opt apparmor=unconfined \
+    -v YOUR_DIR:/output \
+    ghcr.io/tw93/pake \
+    <arguments>
+
+# For example:
+docker run --rm --privileged \
+    --device /dev/fuse \
+    --security-opt apparmor=unconfined \
+    -v ./packages:/output \
+    ghcr.io/tw93/pake \
+    https://example.com --name myapp --icon ./icon.png --targets appimage
+```

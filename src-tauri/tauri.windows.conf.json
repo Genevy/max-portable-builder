@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "icon": ["icons/max.ico"],
+    "active": true,
+    "resources": ["icons/max.ico"],
+    "targets": ["msi"],
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "wix": {
+        "language": ["en-US"],
+        "template": "assets/main.wxs"
+      }
+    }
+  }
+}

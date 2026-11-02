@@ -1,0 +1,306 @@
+# 高级用法
+
+<div align="center">
+
+[English](advanced-usage.md) · **中文**
+
+</div>
+
+通过样式修改、JavaScript 注入和容器通信等方式自定义 Pake 应用。
+
+## 样式自定义
+
+通过修改 CSS 移除广告或自定义外观。
+
+**快速流程：**
+
+1. 运行 `pnpm run dev` 进入开发模式
+2. 使用开发者工具找到要修改的元素
+3. 编辑 `src-tauri/src/inject/style.js`：
+
+   ```javascript
+   const css = `
+     .ads-banner { display: none !important; }
+     .header { background: #1a1a1a !important; }
+   `;
+   ```
+
+## JavaScript 注入
+
+添加自定义功能，如键盘快捷键。
+
+**实现方式：**
+
+1. 编辑 `src-tauri/src/inject/event.js`
+2. 添加事件监听器：
+
+```javascript
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "k") {
+    // 自定义操作
+  }
+});
+```
+
+## 内置功能
+
+### 下载失败通知
+
+下载失败时 Pake 会弹出通知，语言自动匹配系统与浏览器（中文或英文），覆盖常规 HTTP(S)、Data URI（base64 编码文件）、Blob URL（动态生成的文件）和右键菜单发起的下载，授予通知权限后使用原生系统通知，没有权限时降级到控制台日志。要启用通知，在注入的 JavaScript 中请求权限：
+
+```javascript
+// 在应用启动时请求通知权限
+if (window.Notification && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+```
+
+## 容器通信
+
+在网页内容和 Pake 容器之间发送消息。
+
+原生 IPC 只开放给打包的本地页面和配置的网站来源，协议、主机名和端口都要一致，登录跳转和其他来源不会获得原生权限，打包时使用网站最终打开的网址，包括 `www` 或工作区子域。在其他来源的页面上，原生通知、缩放、Pake 的全屏控制、隐藏标题栏时拖动窗口和通过系统浏览器打开链接不可用，下载会交给网页浏览器处理，跨域图片等资源可能直接显示而不保存。自定义命令需要同时注册到 `generate_handler!` 和 `src-tauri/build.rs` 的命令清单，并在 `src-tauri/capabilities/default.json` 中添加对应权限。
+
+**网页端（JavaScript）：**
+
+```javascript
+window.__TAURI__.core.invoke("handle_scroll", {
+  scrollY: window.scrollY,
+  scrollX: window.scrollX,
+});
+```
+
+**容器端（Rust）：**
+
+```rust
+#[tauri::command]
+fn handle_scroll(scroll_y: f64, scroll_x: f64) {
+  println!("滚动位置: {}, {}", scroll_x, scroll_y);
+}
+```
+
+## 窗口配置
+
+在 `pake.json` 中配置窗口属性：
+
+```json
+{
+  "windows": [
+    {
+      "width": 1200,
+      "height": 780,
+      "fullscreen": false,
+      "resizable": true,
+      "hide_title_bar": true
+    }
+  ]
+}
+```
+
+`hide_title_bar` 是 `pake.json` 中的字段名（CLI 对应参数为 `--hide-title-bar`），仅支持 macOS，在 Windows 和 Linux 上会被忽略，这两个平台改用 `hide_window_decorations`（`--hide-window-decorations`）。
+
+## 静态文件打包
+
+打包本地 HTML/CSS/JS 文件：
+
+```bash
+# 打包整个静态文件目录（根目录必须有 index.html），
+# 例如前端构建产物 dist/，整个目录树都会被打进应用
+pake ./dist --name my-tool
+
+# 打包单个 HTML 文件；加 --use-local-file 可同时拷贝同级文件
+pake ./my-app/index.html --name my-static-app --use-local-file
+```
+
+本地打包开箱支持 hash 路由，history 模式的 SPA 路由暂不支持。单文件打包要求 Pake CLI >= 3.0.0，目录打包要求 >= 3.15.0。
+
+## macOS 摄像头与麦克风权限
+
+Pake 构建的应用默认不申请摄像头或麦克风权限。对于需要这些权限的站点（例如视频会议或语音输入），在构建时传入对应的标志：
+
+```bash
+pake https://chatgpt.com --name ChatGPT --microphone
+pake https://meet.google.com --name GoogleMeet --camera --microphone
+```
+
+- `--microphone`: 申请麦克风权限（`com.apple.security.device.audio-input`）
+- `--camera`: 申请摄像头权限（`com.apple.security.device.camera`）
+
+macOS 会在首次使用时向用户弹出权限确认对话框，所以只给确实需要的站点加这些标志。
+
+## 同一站点生成多个独立应用
+
+如果你需要为同一个站点生成多个彼此独立的应用，例如两个不同登录态的 Gmail，可以直接使用不同的应用名称进行构建：
+
+```bash
+pake https://mail.google.com --name "Gmail Work"
+pake https://mail.google.com --name "Gmail Personal"
+```
+
+Pake 会基于 `URL + name` 生成不同的应用标识，因此这两个应用会被当作两个独立桌面应用安装，而不是落到同一个应用上，需要固定 bundle identifier 的高级场景，还可以用隐藏参数 `--identifier`：
+
+```bash
+pake https://mail.google.com --name "Gmail Work" --identifier com.example.gmail.work
+```
+
+`--multi-instance` 和这个能力不同，它只是允许同一个已打包应用启动多个进程，并不会创建多个独立应用身份。
+
+## 项目结构
+
+```tree
+├── bin/                    # CLI 源代码（TypeScript）
+│   ├── builders/          # 平台打包构建器
+│   ├── helpers/           # 辅助工具与配置合并
+│   ├── options/           # CLI 选项解析
+│   └── utils/             # 依赖检测、目录与执行环境处理
+├── docs/                  # 项目文档
+├── src-tauri/             # Tauri 应用核心（Rust）
+│   ├── src/
+│   │   ├── app/           # 核心模块（窗口、菜单、快捷键等）
+│   │   ├── inject/        # 网页注入脚本（CSS、JS、事件监听）
+│   │   └── lib.rs         # 应用入口
+│   ├── icons/             # macOS 图标 (.icns)
+│   ├── png/               # Windows/Linux 图标 (.ico, .png)
+│   ├── pake.json          # 运行时配置模板
+│   └── tauri.*.conf.json  # 平台特定配置
+├── scripts/               # 实用构建脚本
+└── tests/                 # 测试套件
+```
+
+## 开发工作流
+
+### 前置条件
+
+- Node.js ≥22（推荐 LTS，最低 ≥20.9.0）
+- Rust ≥1.85.0（推荐稳定版）
+
+#### 平台特定要求
+
+**macOS:**
+
+- Xcode 命令行工具：`xcode-select --install`
+
+**Windows:**
+
+- **重要**：先看 [Tauri 依赖项指南](https://v2.tauri.app/start/prerequisites/)
+- Windows 10 SDK (10.0.19041.0) 和 Visual Studio Build Tools 2022 (≥17.2)
+- 必需的运行库：
+  1. Microsoft Visual C++ 2015-2022 Redistributable (x64)
+  2. Microsoft Visual C++ 2015-2022 Redistributable (x86)
+  3. Microsoft Visual C++ 2012 Redistributable (x86)（可选）
+  4. Microsoft Visual C++ 2013 Redistributable (x86)（可选）
+  5. Microsoft Visual C++ 2008 Redistributable (x86)（可选）
+
+- **Windows ARM (ARM64) 支持**：在 Visual Studio Installer 的单个组件里安装 MSVC v143 - VS 2022 C++ ARM64 构建工具
+
+**Linux (Ubuntu):**
+
+```bash
+sudo apt install libdbus-1-dev \
+    libsoup-3.0-dev \
+    libjavascriptcoregtk-4.1-dev \
+    libwebkit2gtk-4.1-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libxdo-dev \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    gnome-video-effects \
+    gnome-video-effects-extra \
+    libglib2.0-dev \
+    pkg-config
+```
+
+### 安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/tw93/Pake.git
+cd Pake
+
+# 安装依赖
+pnpm install
+
+# 开始开发
+pnpm run dev
+```
+
+### 开发命令
+
+1. **CLI 更改**: 编辑 `bin/` 中的文件，然后运行 `pnpm run cli:build`
+2. **核心应用更改**: 编辑 `src-tauri/src/` 中的文件，然后运行 `pnpm run dev`
+3. **注入逻辑**: 修改 `src-tauri/src/inject/` 中的文件以进行网页自定义
+4. **测试**: 运行 `pnpm test` 进行综合验证
+
+#### 命令参考
+
+- **开发模式**：`pnpm run dev`（热重载）
+- **构建**：`pnpm run build`
+- **调试构建**：`pnpm run build:debug`
+- **CLI 构建**：`pnpm run cli:build`
+
+#### CLI 开发调试
+
+对于需要热重载的 CLI 开发，运行：
+
+```bash
+pnpm run cli:dev
+```
+
+此脚本以 watch 模式构建 CLI，用传入的参数运行后再以 `tauri dev` 启动应用，对 `pake-cli` 代码修改可实时热更新。
+
+### 测试指南
+
+#### 运行测试
+
+```bash
+# 完整测试套件（推荐）
+pnpm test                   # 构建 CLI，运行 Vitest 套件，再执行真实构建和发布流程 smoke test
+
+# 跳过真实构建和发布流程 smoke test
+pnpm test -- --no-build
+
+# 仅运行快速 Vitest 套件
+npx vitest run
+
+# 构建 CLI 以供测试
+pnpm run cli:build
+
+# 单独运行发布流程 smoke test
+node ./tests/release.js
+```
+
+#### 测试内容详情
+
+`pnpm test` 运行主测试入口 [`tests/index.js`](../tests/index.js)，先构建 CLI，再跑覆盖单元、集成、构建器和 CLI 选项的 Vitest 套件，没有传 `--no-build` 时继续按平台执行真实构建 smoke test，真实构建成功后再跑验证 popular apps 发布构建路径的发布流程 smoke test。
+
+常用可选参数：
+
+- `--no-unit`：跳过单元测试
+- `--no-integration`：跳过集成测试
+- `--no-builder`：跳过构建器测试
+- `--no-build`：跳过真实构建 smoke test 以及后续的发布流程 smoke test
+- `--e2e`：增加端到端配置测试
+- `--pake-cli`：增加 GitHub Actions 相关检查
+
+#### 故障排除
+
+- **CLI 文件不存在**：运行 `pnpm run cli:build`
+- **测试超时**：构建测试需要较长时间完成
+- **构建失败**：检查 Rust 工具链 `rustup update`
+- **权限错误**：确保有写入权限
+
+### 常见构建问题
+
+- **Rust 编译错误**: 在 `src-tauri/` 目录中运行 `cargo clean`
+- **Node 依赖问题**: 删除 `node_modules` 并运行 `pnpm install`
+- **macOS 权限错误**: 运行 `sudo xcode-select --reset`
+
+## 链接
+
+- [CLI 文档](cli-usage_CN.md)
+- [GitHub 讨论区](https://github.com/tw93/Pake/discussions)
