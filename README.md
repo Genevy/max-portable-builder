@@ -148,7 +148,6 @@ max-portable-builder/
 │   ├── tauri.conf.json
 │   └── pake.json
 ├── tests/                    — тесты
-├── .vscode/                  — настройки редактора (не в git)
 ├── package.json              — скрипты сборки
 ├── pnpm-lock.yaml
 ├── README.md
