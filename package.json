@@ -39,7 +39,7 @@
   "scripts": {
     "start": "pnpm run dev",
     "dev": "pnpm run tauri dev",
-    "build": "cross-env PNPM_STORE_DIR=D:\\dev\\.pnpm-store tauri build && node scripts/copy-portable.js",
+    "build": "tauri build && node scripts/copy-portable.js",
     "build:debug": "tauri build --debug",
     "build:mac": "tauri build --target universal-apple-darwin",
     "analyze": "cd src-tauri && cargo bloat --release --crates",
