@@ -2,6 +2,8 @@
 
 ![MAX Portable](preview.webp)
 
+Репозиторий: <https://github.com/Genevy/max-portable-builder>
+
 Портативный клиент мессенджера **MAX** для Windows 10/11 x64 — нативная оболочка
 над официальной веб-версией <https://web.max.ru/>, построенная на
 [Tauri v2](https://v2.tauri.app/) и WebView2 с использованием
