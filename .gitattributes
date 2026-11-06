@@ -25,3 +25,12 @@ src-tauri/.cargo/**/*     linguist-vendored
 
 # Exclude injection system (since it's mostly JS/CSS)
 src-tauri/src/inject/**/* linguist-vendored
+
+# Binary files (do not normalize line endings)
+*.webp binary
+*.png binary
+*.ico binary
+
+
+# Normalize text files
+* text=auto eol=lf

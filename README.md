@@ -106,15 +106,27 @@ pnpm install
 pnpm run build
 ```
 
-Перед сборкой закройте MAX Portable, если он запущен: `scripts/copy-portable.js`
-копирует исполняемый файл поверх работающего, и Windows возвращает `EPERM`.
+### Пересборка
+
+Когда проект уже склонирован и зависимости установлены. Перед сборкой закройте
+запущенный клиент: `scripts/copy-portable.js` перезаписывает exe, и Windows
+возвращает `EPERM`.
 
 ```cmd
 taskkill /IM MaxPortable.exe /F
 pnpm run build
 ```
 
-Готовый файл: `build/max-portable/MaxPortable.exe`.
+### Результат
+
+Пути — от корня репо (проекта):
+
+- `pnpm install` → `schema/` (JSON-схема Pake);
+- `pnpm run build` → `build/max-portable/MaxPortable.exe` (готовый клиент);
+- первый запуск → `build/max-portable/data/` (профиль: вход, кэш).
+
+Профиль `data/` при пересборке не удаляется (`copy-portable.js` его сохраняет),
+поэтому вход в аккаунт не теряется.
 
 > Если `pnpm run build` завершается ошибкой линкера (`link.exe not found`),
 > запустите сборку из **Developer Command Prompt for VS** (x64): там
@@ -134,33 +146,41 @@ start "" MaxPortable.exe
 
 ```
 max-portable-builder/
-├── build/max-portable/       — результат сборки (не в git)
-│   ├── MaxPortable.exe       — готовый клиент (~8 МБ)
-│   └── data/                 — профиль WebView2 (вход, кэш; не в git)
 ├── dist/cli.js               — Pake CLI
 ├── docs/                     — документация Pake
-├── schema/                   — JSON-схема Pake (не в git)
 ├── scripts/copy-portable.js  — копирование exe, сохранение data/
 ├── src-tauri/                — Rust/Tauri
-│   ├── src/                  — lib.rs, app/, inject/
+│   ├── src/
+│   │   ├── lib.rs            — точка входа Tauri
+│   │   ├── util.rs
+│   │   ├── app/              — модули приложения (invoke, window, navigation)
+│   │   └── inject/           — штатные JS-инъекции Pake
 │   ├── icons/max.ico
+│   ├── build.rs
 │   ├── Cargo.toml
+│   ├── Cargo.lock
 │   ├── tauri.conf.json
 │   └── pake.json
 ├── tests/                    — тесты
+├── .editorconfig
+├── .gitattributes            — настройки git (LF, binary для webp/png/ico)
 ├── package.json              — скрипты сборки
 ├── pnpm-lock.yaml
 ├── README.md
 ├── preview.webp
+├── rollup.config.js
+├── rust-toolchain.toml       — версия Rust
+├── tsconfig.json
+├── vitest.config.ts
 ├── LICENSE
-└── .gitignore                — артефакты сборки, зависимости, сгенерированные файлы
+└── .gitignore
 ```
 
 ## Технические заметки
 
 - Каталог `data/` рядом с exe **не изменять вручную** — в нём вход и кэш.
-- Служебный каталог pnpm вынесен из корня диска через `PNPM_STORE_DIR` в скрипте
-  `build` (`package.json`) — обход встроенного резолва `@tauri-apps/cli`.
+- Служебный каталог pnpm не настраивается: используется стор по умолчанию
+  (`%LOCALAPPDATA%\pnpm\store`), привязки к конкретному диску нет.
 - Отладочный лог не пишется: запуск без перенаправления вывода в файл.
 - PowerShell может блокировать pnpm (ExecutionPolicy) — используйте `cmd`.
 
