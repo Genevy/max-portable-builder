@@ -306,6 +306,34 @@ async fn create_unique_file(path: &str) -> std::io::Result<(tokio::fs::File, Str
     ))
 }
 
+/// Open `https://max.ru/...` (or any URL) in the system browser.
+/// Used by link_policy.js for Q1 = B (MAX landing pages stay out of the app).
+#[command]
+pub fn open_external(url: String) -> Result<(), String> {
+    crate::app::deep_link::open_external_url(&url)
+}
+
+/// Handle a `max://...` deep link triggered by a click inside the webview.
+/// Navigates the calling window to the equivalent `https://web.max.ru/...`.
+#[command]
+pub fn open_deep_link(window: WebviewWindow, url: String) -> Result<(), String> {
+    crate::app::deep_link::handle_deep_link(&window.app_handle().clone(), &url);
+    Ok(())
+}
+
+/// Open a `https://max.ru/<x>` link (channels, groups, profiles, posts)
+/// in the current MAX Portable window as `https://web.max.ru/<x>`.
+/// Used by link_policy.js for Q1 = B (in-app, no landing page, no
+/// system browser). `web.max.ru` itself is left untouched: MAX's own
+/// SPA handles its own links.
+#[command]
+pub fn open_max_ru(window: WebviewWindow, url: String) -> Result<(), String> {
+    let web_url = crate::app::deep_link::max_ru_to_web(&url)
+        .ok_or_else(|| format!("Not a max.ru URL: {url}"))?;
+    crate::app::deep_link::navigate_window(&window, &web_url);
+    Ok(())
+}
+
 #[command]
 pub async fn download_file(
     window: WebviewWindow,

@@ -88,3 +88,42 @@ function handleProtocolLinkClick(event, openExternal) {
   event.preventDefault();
   openExternal(url.href);
 }
+
+// MAX deep links and max.ru landing pages, handled by the Rust side.
+// - max://max.ru/<x>       -> open_deep_link (same window, Q3 = A)
+// - https://max.ru/<x>     -> open_max_ru    (in-app, Q1 = B → web.max.ru)
+// capture: true so it runs before Pake's own click handlers and can
+// preventDefault() the anchor navigation before the webview tries it.
+function handleMaxLinkClick(event) {
+  if (event.defaultPrevented) return;
+  const anchor = event.target?.closest?.("a[href]");
+  if (!anchor || anchor.hasAttribute("download")) return;
+  if (anchor.target && !["_blank", "_new", "_self"].includes(anchor.target))
+    return;
+  const href = anchor.href;
+  if (typeof href !== "string") return;
+
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return;
+
+  if (href.startsWith("max://")) {
+    event.preventDefault();
+    event.stopPropagation();
+    invoke("open_deep_link", { url: href }).catch((error) =>
+      console.error("[MAX] open_deep_link failed:", error),
+    );
+    return;
+  }
+
+  if (href.startsWith("https://max.ru/") || href.startsWith("http://max.ru/")) {
+    event.preventDefault();
+    event.stopPropagation();
+    invoke("open_max_ru", { url: href }).catch((error) =>
+      console.error("[MAX] open_max_ru failed:", error),
+    );
+  }
+}
+
+if (typeof window !== "undefined") {
+  document.addEventListener("click", handleMaxLinkClick, true);
+}

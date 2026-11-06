@@ -77,6 +77,8 @@ windows-sys = { version = "0.61.2", features = [
 webview2-com = "0.38"
 # The generated WebView2 interfaces use this trait for COM interface casts.
 windows-core = "0.61.2"
+# Registers the max:// protocol in HKCU\Software\Classes\max (per-user, no UAC).
+winreg = "0.56"
 
 [features]
 # this feature is used for development builds from development cli

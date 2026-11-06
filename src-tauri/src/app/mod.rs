@@ -3,6 +3,7 @@ pub mod auth;
 #[cfg(any(target_os = "linux", test))]
 pub mod color_scheme;
 pub mod config;
+pub mod deep_link;
 pub mod invoke;
 #[cfg(target_os = "macos")]
 pub mod menu;

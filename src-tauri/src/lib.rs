@@ -30,8 +30,8 @@ const GDK_BACKEND: &str = "GDK_BACKEND";
 use app::{
     invoke::{
         clear_dock_badge, close_notification, download_file, increment_dock_badge,
-        send_notification, set_dock_badge, set_dock_badge_label, set_title_bar_color, set_zoom,
-        update_theme_mode, webview_navigate,
+        open_deep_link, open_external, open_max_ru, send_notification, set_dock_badge, set_dock_badge_label,
+        set_title_bar_color, set_zoom, update_theme_mode, webview_navigate,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{
@@ -383,12 +383,25 @@ pub fn run_app() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init()); // Add this
-
     // Only add single instance plugin if multiple instances are not allowed
     if !multi_instance {
         let instance_revealed = startup_window_revealed.clone();
         app_builder = app_builder.plugin(tauri_plugin_single_instance::init(
-            move |app, _args, _cwd| {
+            move |app, args, _cwd| {
+                // Second launch with a deep link (max://...) — Windows starts
+                // MaxPortable.exe "max://...", single-instance hands the
+                // argument here. Navigate the already-open window instead of
+                // silently ignoring it (old behavior).
+                if let Some(url) = args.iter().find(|arg| arg.starts_with("max://")).cloned() {
+                    app::deep_link::handle_deep_link(app, &url);
+                    if let Some(window) = app.get_webview_window("pake") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    return;
+                }
+
                 if multi_window {
                     open_additional_window_safe(app);
                 } else if let Some(window) = app.get_webview_window("pake") {
@@ -448,6 +461,9 @@ pub fn run_app() {
     app_builder
         .invoke_handler(tauri::generate_handler![
             download_file,
+            open_deep_link,
+            open_external,
+            open_max_ru,
             send_notification,
             close_notification,
             increment_dock_badge,
@@ -462,6 +478,9 @@ pub fn run_app() {
         .setup(move |app| {
             // Grant remote IPC only to the immutable, packaged entry origins,
             // before any webview can start loading untrusted content.
+            // Register max:// for the current exe (per-user, no UAC).
+            // Safe on every startup: it just overwrites the same keys.
+            app::deep_link::register_protocol();
             if let Some(capability) = pake_config.remote_capability()? {
                 app.add_capability(capability)?;
             }
@@ -487,6 +506,17 @@ pub fn run_app() {
             // --- Menu Construction End ---
 
             let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;
+
+            // If Windows launched us with a max://... argument (a click on a
+            // registered protocol handler), navigate to the channel once the
+            // window exists. Deferred so the webview can finish booting.
+            if let Some(url) = app::deep_link::pending_deep_link() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    app::deep_link::handle_deep_link(&handle, &url);
+                });
+            }
 
             // An explicit --dark-mode wins over the desktop preference.
             #[cfg(target_os = "linux")]
