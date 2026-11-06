@@ -7,7 +7,8 @@
 //! Behaviour (agreed with the user):
 //! - `max://max.ru/<path>`  -> navigate the current window to
 //!   `https://web.max.ru/<path>` (same window, Q3 = A).
-//! - `https://max.ru/<path>` -> open in the system browser (Q1 = B).
+//! - `https://max.ru/<path>` -> open in the current window as
+//!   `https://web.max.ru/<path>` (Q1 = B, in-app, no landing page).
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -68,10 +69,10 @@ pub fn register_protocol() {}
 /// link, so callers can fall back to "ignore" or "open externally".
 ///
 /// Examples:
-/// - `max://max.ru/atom_auto`   -> `Some("https://web.max.ru/atom_auto")`
-/// - `max://max.ru/atom_auto/`  -> `Some("https://web.max.ru/atom_auto/")`
-/// - `max://other.host/x`       -> `None`
-/// - `https://max.ru/x`         -> `None` (handled elsewhere, Q1 = B)
+/// - `max://max.ru/example_channel`   -> `Some("https://web.max.ru/example_channel")`
+/// - `max://max.ru/example_channel/`  -> `Some("https://web.max.ru/example_channel/")`
+/// - `max://other.host/x`             -> `None`
+/// - `https://max.ru/x`               -> `None` (handled elsewhere, Q1 = B)
 pub fn parse_deep_link(url: &str) -> Option<String> {
     let rest = url.strip_prefix("max://")?;
     let (host, path) = match rest.split_once('/') {
@@ -153,16 +154,16 @@ mod tests {
     #[test]
     fn parses_channel_link() {
         assert_eq!(
-            parse_deep_link("max://max.ru/atom_auto").as_deref(),
-            Some("https://web.max.ru/atom_auto")
+            parse_deep_link("max://max.ru/example_channel").as_deref(),
+            Some("https://web.max.ru/example_channel")
         );
     }
 
     #[test]
     fn parses_trailing_slash() {
         assert_eq!(
-            parse_deep_link("max://max.ru/atom_auto/").as_deref(),
-            Some("https://web.max.ru/atom_auto/")
+            parse_deep_link("max://max.ru/example_channel/").as_deref(),
+            Some("https://web.max.ru/example_channel/")
         );
     }
 
@@ -182,31 +183,31 @@ mod tests {
 
     #[test]
     fn rejects_non_max_scheme() {
-        assert_eq!(parse_deep_link("https://max.ru/atom_auto"), None);
+        assert_eq!(parse_deep_link("https://max.ru/example_channel"), None);
         assert_eq!(parse_deep_link("maxx://max.ru/x"), None);
     }
 
     #[test]
     fn host_is_case_insensitive() {
         assert_eq!(
-            parse_deep_link("max://MAX.RU/atom_auto").as_deref(),
-            Some("https://web.max.ru/atom_auto")
+            parse_deep_link("max://MAX.RU/example_channel").as_deref(),
+            Some("https://web.max.ru/example_channel")
         );
     }
 
     #[test]
     fn max_ru_to_web_converts_https() {
         assert_eq!(
-            max_ru_to_web("https://max.ru/atom_auto").as_deref(),
-            Some("https://web.max.ru/atom_auto")
+            max_ru_to_web("https://max.ru/example_channel").as_deref(),
+            Some("https://web.max.ru/example_channel")
         );
     }
 
     #[test]
     fn max_ru_to_web_converts_http() {
         assert_eq!(
-            max_ru_to_web("http://max.ru/atom_auto").as_deref(),
-            Some("https://web.max.ru/atom_auto")
+            max_ru_to_web("http://max.ru/example_channel").as_deref(),
+            Some("https://web.max.ru/example_channel")
         );
     }
 
