@@ -1,8 +1,8 @@
 # MAX Portable — портативный клиент MAX для Windows
 
-![MAX Portable](preview.webp)
+📦 Репозиторий на GitHub: <https://github.com/Genevy/max-portable-builder>
 
-Репозиторий: <https://github.com/Genevy/max-portable-builder>
+![MAX Portable](preview.webp)
 
 Портативный клиент мессенджера **MAX** для Windows 10/11 x64 — нативная оболочка
 над официальной веб-версией <https://web.max.ru/>, построенная на
