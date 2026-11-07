@@ -29,7 +29,7 @@ const GDK_BACKEND: &str = "GDK_BACKEND";
 
 use app::{
     invoke::{
-        clear_dock_badge, close_notification, debug_log, download_file, increment_dock_badge,
+        clear_dock_badge, close_notification, download_file, increment_dock_badge,
         open_deep_link, open_external, open_max_ru, send_notification, set_dock_badge, set_dock_badge_label,
         set_title_bar_color, set_zoom, update_theme_mode, webview_navigate,
     },
@@ -460,7 +460,6 @@ pub fn run_app() {
 
     app_builder
         .invoke_handler(tauri::generate_handler![
-            debug_log,
             download_file,
             open_deep_link,
             open_external,

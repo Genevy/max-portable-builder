@@ -306,14 +306,6 @@ async fn create_unique_file(path: &str) -> std::io::Result<(tokio::fs::File, Str
     ))
 }
 
-/// Diagnostic sink for injected JS. Writes the webview's breadcrumbs to
-/// stderr (captured with `2>`) so link routing can be diagnosed without
-/// DevTools, which this build keeps closed.
-#[command]
-pub fn debug_log(msg: String) {
-    eprintln!("[MAX][js] {msg}");
-}
-
 /// Open `https://max.ru/...` (or any URL) in the system browser.
 /// Used by link_policy.js for Q1 = B (MAX landing pages stay out of the app).
 #[command]
@@ -336,12 +328,9 @@ pub fn open_deep_link(window: WebviewWindow, url: String) -> Result<(), String> 
 /// SPA handles its own links.
 #[command]
 pub fn open_max_ru(window: WebviewWindow, url: String) -> Result<(), String> {
-    eprintln!("[MAX] open_max_ru called: {url}");
     let web_url = crate::app::deep_link::max_ru_to_web(&url)
         .ok_or_else(|| format!("Not a max.ru URL: {url}"))?;
-    eprintln!("[MAX] open_max_ru -> {web_url}");
     crate::app::deep_link::navigate_window(&window, &web_url);
-    eprintln!("[MAX] open_max_ru done");
     Ok(())
 }
 

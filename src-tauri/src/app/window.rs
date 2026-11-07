@@ -610,14 +610,12 @@ fn build_window(
         let popup_tauri_config = tauri_config.clone();
         let popup_label = label.to_string();
         window_builder = window_builder.on_new_window(move |target_url, features| {
-            eprintln!("[MAX][new-window] {target_url}");
             // A MAX landing link must never become a separate window: route it
             // to the equivalent web.max.ru page in the window that asked for
             // it (target="_blank" anchors, window.open).
             if let Some(web_url) = crate::app::deep_link::max_ru_to_web(target_url.as_str())
                 .or_else(|| crate::app::deep_link::parse_deep_link(target_url.as_str()))
             {
-                eprintln!("[MAX][new-window] -> {web_url}");
                 let handle = app_handle.clone();
                 let window_label = popup_label.clone();
                 std::thread::spawn(move || {
@@ -914,7 +912,6 @@ fn build_window(
         let nav_handle = app.clone();
         let nav_label = label.to_string();
         window_builder = window_builder.on_navigation(move |url| {
-            eprintln!("[MAX][nav] {url}");
             let host = url.host_str().unwrap_or("");
             let path = url.path();
             let is_max_attachment = host == "i.oneme.ru"
@@ -939,7 +936,6 @@ fn build_window(
             if let Some(web_url) = crate::app::deep_link::max_ru_to_web(url.as_str())
                 .or_else(|| crate::app::deep_link::parse_deep_link(url.as_str()))
             {
-                eprintln!("[MAX][nav] routed {url} -> {web_url}");
                 let handle = nav_handle.clone();
                 let window_label = nav_label.clone();
                 std::thread::spawn(move || {

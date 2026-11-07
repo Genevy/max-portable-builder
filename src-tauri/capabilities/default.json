@@ -5,7 +5,6 @@
   "webviews": ["pake", "pake-*"],
   "permissions": [
     "allow-download-file",
-    "allow-debug-log",
     "allow-open-deep-link",
     "allow-open-external",
     "allow-open-max-ru",

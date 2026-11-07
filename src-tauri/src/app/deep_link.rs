@@ -136,7 +136,6 @@ fn navigate_main_window(app: &AppHandle, url: &str) {
 /// Navigate a specific window, bringing it to the foreground first so that
 /// a deep link from a browser visibly lands on the channel.
 pub fn navigate_window(window: &WebviewWindow, url: &str) {
-    eprintln!("[MAX] navigate_window called: {url}");
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
@@ -144,8 +143,6 @@ pub fn navigate_window(window: &WebviewWindow, url: &str) {
         Ok(parsed) => {
             if let Err(error) = window.navigate(parsed) {
                 eprintln!("[MAX] navigate_window failed: {error}");
-            } else {
-                eprintln!("[MAX] navigate_window ok");
             }
         }
         Err(error) => eprintln!("[MAX] navigate_window invalid URL {url}: {error}"),

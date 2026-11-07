@@ -1,6 +1,5 @@
 // Shared by the main page and the lightweight subframe bridge.
 // Tauri rejects WebKit's empty popup URL before calling our native handler.
-console.log("[MAX] link_policy.js loaded, __TAURI__ =", typeof window.__TAURI__);
 function normalizePopupUrl(url) {
   return url === undefined || (typeof url === "string" && !url.trim())
     ? "about:blank"
@@ -139,26 +138,6 @@ function maxAnchorFromEvent(event) {
     : null;
 }
 
-function maxLinkLog(message) {
-  console.log("[MAX] " + message);
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (invoke) invoke("debug_log", { msg: message }).catch(() => {});
-}
-
-// Breadcrumb for the click that never turns into a `click` event (some
-// handlers preventDefault() on pointerdown and open the link themselves).
-window.addEventListener(
-  "pointerdown",
-  (event) => {
-    if (event.button !== 0) return;
-    const anchor = maxAnchorFromEvent(event);
-    if (anchor && maxWebUrlFromHref(anchor.href)) {
-      maxLinkLog("pointerdown: " + anchor.href);
-    }
-  },
-  true,
-);
-
 function handleMaxLinkClick(event) {
   const anchor = maxAnchorFromEvent(event);
   if (!anchor || anchor.hasAttribute("download")) return;
@@ -175,7 +154,6 @@ function handleMaxLinkClick(event) {
     event.stopImmediatePropagation();
   }
 
-  maxLinkLog("click: " + href + " -> " + webUrl);
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) {
     window.location.assign(webUrl);
@@ -191,5 +169,4 @@ function handleMaxLinkClick(event) {
 
 if (typeof window !== "undefined") {
   window.addEventListener("click", handleMaxLinkClick, true);
-  maxLinkLog("link_policy ready: top=" + (window === window.top));
 }
