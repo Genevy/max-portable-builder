@@ -1,5 +1,6 @@
 // Shared by the main page and the lightweight subframe bridge.
 // Tauri rejects WebKit's empty popup URL before calling our native handler.
+console.log("[MAX] link_policy.js loaded, __TAURI__ =", typeof window.__TAURI__);
 function normalizePopupUrl(url) {
   return url === undefined || (typeof url === "string" && !url.trim())
     ? "about:blank"
@@ -89,41 +90,106 @@ function handleProtocolLinkClick(event, openExternal) {
   openExternal(url.href);
 }
 
-// MAX deep links and max.ru landing pages, handled by the Rust side.
-// - max://max.ru/<x>       -> open_deep_link (same window, Q3 = A)
-// - https://max.ru/<x>     -> open_max_ru    (in-app, Q1 = B → web.max.ru)
-// capture: true so it runs before Pake's own click handlers and can
-// preventDefault() the anchor navigation before the webview tries it.
+// MAX deep links and max.ru landing pages, handled before MAX's own router
+// sees the click:
+// - max://max.ru/<x>   -> https://web.max.ru/<x>
+// - https://max.ru/<x> -> https://web.max.ru/<x>
+//
+// MAX's SPA only routes same-origin links: a cross-origin max.ru anchor is
+// either ignored by the router (nothing happens) or sent to the system
+// browser. The listener must be on `window` in the capture phase: page
+// scripts run after initialization scripts, so this is the first click
+// listener on the page and MAX cannot hide the link with stopPropagation()
+// or a preventDefault() that runs before a document-level listener.
+function maxWebUrlFromHref(href) {
+  let url;
+  try {
+    url = new URL(href, window.location.href);
+  } catch (error) {
+    return null;
+  }
+  let rest;
+  if (url.protocol === "max:") {
+    if (url.hostname.toLowerCase() !== "max.ru") return null;
+    rest = url.pathname.replace(/^\//, "");
+  } else if (
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    (url.hostname === "max.ru" || url.hostname === "www.max.ru")
+  ) {
+    rest = url.pathname.replace(/^\//, "");
+  } else {
+    return null;
+  }
+  return `https://web.max.ru/${rest}${url.search}${url.hash}`;
+}
+
+// composedPath() also finds an anchor behind an open shadow root, where
+// event.target is retargeted to the host element.
+function maxAnchorFromEvent(event) {
+  if (typeof event.composedPath === "function") {
+    for (const node of event.composedPath()) {
+      if (node && node.nodeType === 1 && node.matches && node.matches("a[href]")) {
+        return node;
+      }
+    }
+  }
+  const target = event.target;
+  return target && typeof target.closest === "function"
+    ? target.closest("a[href]")
+    : null;
+}
+
+function maxLinkLog(message) {
+  console.log("[MAX] " + message);
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (invoke) invoke("debug_log", { msg: message }).catch(() => {});
+}
+
+// Breadcrumb for the click that never turns into a `click` event (some
+// handlers preventDefault() on pointerdown and open the link themselves).
+window.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (event.button !== 0) return;
+    const anchor = maxAnchorFromEvent(event);
+    if (anchor && maxWebUrlFromHref(anchor.href)) {
+      maxLinkLog("pointerdown: " + anchor.href);
+    }
+  },
+  true,
+);
+
 function handleMaxLinkClick(event) {
-  if (event.defaultPrevented) return;
-  const anchor = event.target?.closest?.("a[href]");
+  const anchor = maxAnchorFromEvent(event);
   if (!anchor || anchor.hasAttribute("download")) return;
-  if (anchor.target && !["_blank", "_new", "_self"].includes(anchor.target))
-    return;
   const href = anchor.href;
   if (typeof href !== "string") return;
+  const webUrl = maxWebUrlFromHref(href);
+  if (!webUrl) return;
 
+  // Claim the click before MAX's router can preventDefault() it and then drop
+  // the cross-origin URL, and before Pake can send it to the system browser.
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === "function") {
+    event.stopImmediatePropagation();
+  }
+
+  maxLinkLog("click: " + href + " -> " + webUrl);
   const invoke = window.__TAURI__?.core?.invoke;
-  if (!invoke) return;
-
-  if (href.startsWith("max://")) {
-    event.preventDefault();
-    event.stopPropagation();
-    invoke("open_deep_link", { url: href }).catch((error) =>
-      console.error("[MAX] open_deep_link failed:", error),
-    );
+  if (!invoke) {
+    window.location.assign(webUrl);
     return;
   }
-
-  if (href.startsWith("https://max.ru/") || href.startsWith("http://max.ru/")) {
-    event.preventDefault();
-    event.stopPropagation();
-    invoke("open_max_ru", { url: href }).catch((error) =>
-      console.error("[MAX] open_max_ru failed:", error),
-    );
-  }
+  invoke(href.startsWith("max://") ? "open_deep_link" : "open_max_ru", {
+    url: href,
+  }).catch((error) => {
+    console.error("[MAX] native navigation failed, falling back:", error);
+    window.location.assign(webUrl);
+  });
 }
 
 if (typeof window !== "undefined") {
-  document.addEventListener("click", handleMaxLinkClick, true);
+  window.addEventListener("click", handleMaxLinkClick, true);
+  maxLinkLog("link_policy ready: top=" + (window === window.top));
 }

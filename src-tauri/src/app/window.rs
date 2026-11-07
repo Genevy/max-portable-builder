@@ -608,7 +608,26 @@ fn build_window(
         let app_handle = app.clone();
         let popup_config = config.clone();
         let popup_tauri_config = tauri_config.clone();
+        let popup_label = label.to_string();
         window_builder = window_builder.on_new_window(move |target_url, features| {
+            eprintln!("[MAX][new-window] {target_url}");
+            // A MAX landing link must never become a separate window: route it
+            // to the equivalent web.max.ru page in the window that asked for
+            // it (target="_blank" anchors, window.open).
+            if let Some(web_url) = crate::app::deep_link::max_ru_to_web(target_url.as_str())
+                .or_else(|| crate::app::deep_link::parse_deep_link(target_url.as_str()))
+            {
+                eprintln!("[MAX][new-window] -> {web_url}");
+                let handle = app_handle.clone();
+                let window_label = popup_label.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if let Some(window) = handle.get_webview_window(&window_label) {
+                        crate::app::deep_link::navigate_window(&window, &web_url);
+                    }
+                });
+                return NewWindowResponse::Deny;
+            }
             // Even without --new-window, two-stage popups need a real webview
             // with our download delegate, never a proxy for the main window.
             if !allow_new_window && !is_blank_popup_url(&target_url) {
@@ -893,7 +912,9 @@ fn build_window(
     // поэтому on_download молчит. Перехватываем навигацию и скачиваем через reqwest.
     {
         let nav_handle = app.clone();
+        let nav_label = label.to_string();
         window_builder = window_builder.on_navigation(move |url| {
+            eprintln!("[MAX][nav] {url}");
             let host = url.host_str().unwrap_or("");
             let path = url.path();
             let is_max_attachment = host == "i.oneme.ru"
@@ -909,6 +930,25 @@ fn build_window(
                     download_max_attachment(&handle, &label, &url_str);
                 });
                 return false; // отменить навигацию
+            }
+
+            // Native fallback for clicks that bypass link_policy.js: a landing
+            // link (https://max.ru/<x>, max://max.ru/<x>) becomes the same
+            // https://web.max.ru/<x> page inside this window instead of the
+            // landing page or the system browser.
+            if let Some(web_url) = crate::app::deep_link::max_ru_to_web(url.as_str())
+                .or_else(|| crate::app::deep_link::parse_deep_link(url.as_str()))
+            {
+                eprintln!("[MAX][nav] routed {url} -> {web_url}");
+                let handle = nav_handle.clone();
+                let window_label = nav_label.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if let Some(window) = handle.get_webview_window(&window_label) {
+                        crate::app::deep_link::navigate_window(&window, &web_url);
+                    }
+                });
+                return false;
             }
             true
         });

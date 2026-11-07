@@ -5,6 +5,10 @@
   "webviews": ["pake", "pake-*"],
   "permissions": [
     "allow-download-file",
+    "allow-debug-log",
+    "allow-open-deep-link",
+    "allow-open-external",
+    "allow-open-max-ru",
     "allow-send-notification",
     "allow-close-notification",
     "allow-increment-dock-badge",

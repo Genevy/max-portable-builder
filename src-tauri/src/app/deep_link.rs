@@ -10,7 +10,7 @@
 //! - `https://max.ru/<path>` -> open in the current window as
 //!   `https://web.max.ru/<path>` (Q1 = B, in-app, no landing page).
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, Url, WebviewWindow};
 
 /// The `max://` links the MAX landing page emits look like
 /// `max://max.ru/<channel>`; the real web app lives at
@@ -91,9 +91,23 @@ pub fn parse_deep_link(url: &str) -> Option<String> {
 /// or bouncing the user to the system browser. Returns `None` for
 /// anything that is not a `http(s)://max.ru/...` URL.
 pub fn max_ru_to_web(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://max.ru/")
-        .or_else(|| url.strip_prefix("http://max.ru/"))?;
+    let parsed = Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?.trim_start_matches("www.");
+    if !host.eq_ignore_ascii_case(DEEP_LINK_HOST) {
+        return None;
+    }
+    let mut rest = parsed.path().trim_start_matches('/').to_string();
+    if let Some(query) = parsed.query() {
+        rest.push('?');
+        rest.push_str(query);
+    }
+    if let Some(fragment) = parsed.fragment() {
+        rest.push('#');
+        rest.push_str(fragment);
+    }
     Some(format!("{DEEP_LINK_WEB_PREFIX}{rest}"))
 }
 
@@ -122,11 +136,19 @@ fn navigate_main_window(app: &AppHandle, url: &str) {
 /// Navigate a specific window, bringing it to the foreground first so that
 /// a deep link from a browser visibly lands on the channel.
 pub fn navigate_window(window: &WebviewWindow, url: &str) {
+    eprintln!("[MAX] navigate_window called: {url}");
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
-    if let Err(error) = window.navigate(url.parse().expect("deep_link URL")) {
-        eprintln!("[MAX] deep_link: failed to navigate to {url}: {error}");
+    match url.parse() {
+        Ok(parsed) => {
+            if let Err(error) = window.navigate(parsed) {
+                eprintln!("[MAX] navigate_window failed: {error}");
+            } else {
+                eprintln!("[MAX] navigate_window ok");
+            }
+        }
+        Err(error) => eprintln!("[MAX] navigate_window invalid URL {url}: {error}"),
     }
 }
 
@@ -208,6 +230,26 @@ mod tests {
         assert_eq!(
             max_ru_to_web("http://max.ru/example_channel").as_deref(),
             Some("https://web.max.ru/example_channel")
+        );
+    }
+
+    #[test]
+    fn max_ru_to_web_converts_bare_domain_and_www() {
+        assert_eq!(
+            max_ru_to_web("https://max.ru").as_deref(),
+            Some("https://web.max.ru/")
+        );
+        assert_eq!(
+            max_ru_to_web("https://www.max.ru/example_channel").as_deref(),
+            Some("https://web.max.ru/example_channel")
+        );
+    }
+
+    #[test]
+    fn max_ru_to_web_keeps_query_and_fragment() {
+        assert_eq!(
+            max_ru_to_web("https://max.ru/example_channel?start=1#post-2").as_deref(),
+            Some("https://web.max.ru/example_channel?start=1#post-2")
         );
     }
 

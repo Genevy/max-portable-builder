@@ -10,6 +10,10 @@ fn main() {
             .app_manifest(
                 tauri_build::AppManifest::new().commands(&[
                     "download_file",
+                    "debug_log",
+                    "open_deep_link",
+                    "open_external",
+                    "open_max_ru",
                     "send_notification",
                     "close_notification",
                     "increment_dock_badge",
