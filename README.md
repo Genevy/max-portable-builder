@@ -71,7 +71,7 @@ MAX Portable решает задачу удобного доступа к веб
 Скачивание выполняется через системный диалог «Сохранить как»:
 
 - **Медиа (фото, видео)** — имя формируется по локальному времени:
-  `2026-11-01_HH-MM-SS.png` / `.mp4`;
+  `YYYY-MM-DD_HH-MM-SS.png` / `.mp4`;
 - **Документы, архивы и прочие файлы** — сохраняются с исходным именем и
   расширением (`file.docx`, `report.pdf`, `archive.zip`).
 
@@ -207,7 +207,6 @@ max-portable-builder/
 ├── package.json              — скрипты сборки
 ├── pnpm-lock.yaml
 ├── README.md
-├── preview.webp
 ├── rollup.config.js
 ├── rust-toolchain.toml       — версия Rust
 ├── tsconfig.json
