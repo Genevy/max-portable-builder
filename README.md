@@ -1,8 +1,13 @@
-# MAX Desktop Portable — портативное приложение мессенджера MAX для Windows
+# MAX Desktop Portable
+<strong> Портативное приложение мессенджера MAX для Windows</strong>
 
-📦 Репозиторий на GitHub: <https://github.com/Genevy/max-portable-builder>
+Репозиторий на [GitHub](<https://github.com/genevy/max-portable-builder>)
 
-![MAX Desktop Portable](preview.webp)
+<br>
+
+![MAX Hero](hero.webp)
+
+<br>
 
 Портативный клиент мессенджера **MAX** для Windows 10/11 x64 — нативная оболочка
 над официальной веб-версией <https://web.max.ru/>, построенная на
@@ -280,3 +285,7 @@ max-portable-builder/
 - [Tauri](https://v2.tauri.app/) — фреймворк для нативных приложений на Rust.
 - [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — движок
   отображения от Microsoft.
+
+  <br>
+
+   ![MAX Desktop Portable example](example.webp)
