@@ -46,6 +46,20 @@ for (const marker of [".shortcut_created_v2", ".shortcut_created"]) {
 const destExe = path.join(targetDir, "MaxPortable.exe");
 fs.copyFileSync(builtExe, destExe);
 
+// Copy the title-bar icon next to the exe. It is NOT embedded in the exe;
+// reapply_window_icon() loads it from current_exe().parent()/titlebar.ico.
+// Must be re-copied on every build because the wipe above removes it.
+const titlebarSrc = path.join(root, "src-tauri", "icons", "titlebar.ico");
+const titlebarDest = path.join(targetDir, "titlebar.ico");
+if (fs.existsSync(titlebarSrc)) {
+  fs.copyFileSync(titlebarSrc, titlebarDest);
+  console.log(`[copy-portable] Copied titlebar.ico -> ${titlebarDest}`);
+} else {
+  console.warn(
+    `[copy-portable] titlebar.ico not found at ${titlebarSrc}; title bar will fall back to the app icon.`,
+  );
+}
+
 const size = fs.statSync(destExe).size;
 console.log(
   `[copy-portable] Copied MaxPortable.exe -> ${destExe} (${size} bytes)`,
