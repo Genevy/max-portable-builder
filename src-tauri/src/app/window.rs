@@ -26,7 +26,7 @@ use tauri::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::{
     Shell::ExtractIconExW,
-    WindowsAndMessaging::{SendMessageW, ICON_BIG, WM_SETICON},
+    WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON},
 };
 
 use tauri::Theme;
@@ -230,17 +230,14 @@ fn install_download_handler(
 // large taskbar icon whenever a window becomes visible.
 #[cfg(target_os = "windows")]
 pub fn reapply_window_icon(window: &WebviewWindow) {
-    if let Some(icon) = window.app_handle().default_window_icon().cloned() {
-        if let Err(error) = window.set_icon(icon) {
-            eprintln!("[Pake] Failed to re-apply the window icon: {error}");
-        }
-    }
-
     let Some(taskbar_icon) = taskbar_icon_handle() else {
         return;
     };
     match window.hwnd() {
         Ok(hwnd) => unsafe {
+            // Keep the app icon on the taskbar, but clear the small (title
+            // bar) icon so the caption's top-left corner shows no icon.
+            SendMessageW(hwnd.0, WM_SETICON, ICON_SMALL as usize, 0);
             SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
         },
         Err(error) => {
@@ -544,10 +541,10 @@ fn build_window(
         }
     });
 
-     // MAX: load window title-bar icon from bundled max.ico next to exe
+     // MAX: load window title-bar icon from bundled app.ico next to exe
     let max_window_icon = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("max.ico")))
+        .and_then(|p| p.parent().map(|d| d.join("app.ico")))
         .and_then(|path| tauri::image::Image::from_path(&path).ok());
 
 

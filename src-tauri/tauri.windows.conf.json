@@ -1,8 +1,8 @@
 {
   "bundle": {
-    "icon": ["icons/max.ico"],
+    "icon": ["icons/app.ico"],
     "active": true,
-    "resources": ["icons/max.ico"],
+    "resources": ["icons/app.ico"],
     "targets": ["msi"],
     "windows": {
       "digestAlgorithm": "sha256",

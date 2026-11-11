@@ -3,6 +3,7 @@
     {
       "url": "https://web.max.ru/",
       "url_type": "web",
+      "title": "",
       "hide_title_bar": false,
       "hide_window_decorations": false,
       "fullscreen": false,

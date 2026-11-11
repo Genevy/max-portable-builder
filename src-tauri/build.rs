@@ -5,7 +5,7 @@ fn main() {
         tauri_build::Attributes::new()
             .windows_attributes(
                 tauri_build::WindowsAttributes::new()
-                    .window_icon_path("icons/max.ico"),
+                    .window_icon_path("icons/app.ico"),
             )
             .app_manifest(
                 tauri_build::AppManifest::new().commands(&[

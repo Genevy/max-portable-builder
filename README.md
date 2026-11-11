@@ -195,7 +195,7 @@ max-portable-builder/
 │   │   │   ├── tab_bar.rs
 │   │   │   └── window.rs
 │   │   └── inject/           — штатные JS-инъекции Pake
-│   ├── icons/max.ico
+│   ├── icons/app.ico
 │   ├── build.rs
 │   ├── Cargo.toml
 │   ├── Cargo.lock

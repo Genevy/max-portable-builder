@@ -13,6 +13,6 @@
     "frontendDist": "../dist" 
   }, 
   "bundle": { 
-    "icon": ["icons/max.ico"] 
+    "icon": ["icons/app.ico"] 
   } 
 } 
