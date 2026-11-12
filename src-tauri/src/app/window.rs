@@ -26,9 +26,7 @@ use tauri::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::{
     Shell::ExtractIconExW,
-    WindowsAndMessaging::{
-        SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON, LoadImageW, IMAGE_ICON, LR_LOADFROMFILE,
-    },
+    WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON},
 };
 
 use tauri::Theme;
@@ -176,47 +174,6 @@ fn taskbar_icon_handle() -> Option<isize> {
     })
 }
 
-#[cfg(target_os = "windows")]
-fn titlebar_icon_handle() -> Option<isize> {
-    static TITLEBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
-
-    *TITLEBAR_ICON.get_or_init(|| {
-        let executable = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(error) => {
-                eprintln!(
-                    "[Pake] Failed to resolve the app executable for its titlebar icon: {error}"
-                );
-                return None;
-            }
-        };
-        let icon_path = executable.parent()?.join("titlebar.ico");
-        let icon_path_wide: Vec<u16> = icon_path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let icon = unsafe {
-            LoadImageW(
-                ptr::null_mut(),
-                icon_path_wide.as_ptr(),
-                IMAGE_ICON,
-                16,
-                16,
-                LR_LOADFROMFILE,
-            )
-        };
-        if icon.is_null() {
-            eprintln!(
-                "[Pake] Failed to load the titlebar icon from {}.",
-                icon_path.display()
-            );
-            return None;
-        }
-        Some(icon as isize)
-    })
-}
-
 /// Subscribe to WebView2's native `DownloadStarting` event so downloads that
 /// Pake's `on_download` cannot see (blob:, data:, in-memory media MAX hands
 /// out as blob URLs) still reach the user. With `SetHandled(false)` WebView2
@@ -278,16 +235,9 @@ pub fn reapply_window_icon(window: &WebviewWindow) {
     };
     match window.hwnd() {
         Ok(hwnd) => unsafe {
-            // Keep the app icon on the taskbar, but override the small (title
-            // bar) icon with the bundled titlebar.ico so the caption's
-            // top-left corner shows the dedicated title-bar icon instead of
-            // the taskbar one.
-            SendMessageW(
-                hwnd.0,
-                WM_SETICON,
-                ICON_SMALL as usize,
-                titlebar_icon_handle().unwrap_or(0),
-            );
+            // Keep the app icon on the taskbar, but clear the small (title
+            // bar) icon so the caption's top-left corner shows no icon.
+            SendMessageW(hwnd.0, WM_SETICON, ICON_SMALL as usize, 0);
             SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
         },
         Err(error) => {
