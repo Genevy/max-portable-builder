@@ -46,6 +46,17 @@ for (const marker of [".shortcut_created_v2", ".shortcut_created"]) {
 const destExe = path.join(targetDir, "MaxPortable.exe");
 fs.copyFileSync(builtExe, destExe);
 
+// Copy the end-user readme next to the exe. Not embedded; re-copied on every
+// build because the wipe above removes it.
+const readmeSrc = path.join(root, "src-tauri", "readme.txt");
+const readmeDest = path.join(targetDir, "readme.txt");
+if (fs.existsSync(readmeSrc)) {
+  fs.copyFileSync(readmeSrc, readmeDest);
+  console.log(`[copy-portable] Copied readme.txt -> ${readmeDest}`);
+} else {
+  console.warn(`[copy-portable] readme.txt not found at ${readmeSrc}`);
+}
+
 const size = fs.statSync(destExe).size;
 console.log(
   `[copy-portable] Copied MaxPortable.exe -> ${destExe} (${size} bytes)`,
