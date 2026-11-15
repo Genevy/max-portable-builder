@@ -22,15 +22,15 @@ use tauri::{
     webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
     AppHandle, Config, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
-
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::{
     Shell::ExtractIconExW,
-    WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON},
+    WindowsAndMessaging::{
+        LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_LOADFROMFILE, WM_SETICON,
+    },
 };
 
 use tauri::Theme;
-
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 
@@ -65,6 +65,116 @@ fn build_proxy_browser_arg(url: &Url) -> Option<String> {
     match scheme {
         "http" | "socks5" => Some(format!("--proxy-server={scheme}://{host}:{port}")),
         _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_icon_handle() -> Option<isize> {
+    static TASKBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
+
+    *TASKBAR_ICON.get_or_init(|| {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!(
+                    "[Pake] Failed to resolve the app executable for its taskbar icon: {error}"
+                );
+                return None;
+            }
+        };
+        let executable_wide: Vec<u16> = executable
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut large_icon = ptr::null_mut();
+        let extracted = unsafe {
+            ExtractIconExW(
+                executable_wide.as_ptr(),
+                0,
+                &mut large_icon,
+                ptr::null_mut(),
+                1,
+            )
+        };
+        if extracted == 0 || large_icon.is_null() {
+            eprintln!(
+                "[Pake] Failed to extract the taskbar icon from {}.",
+                executable.display()
+            );
+            return None;
+        }
+
+        // WM_SETICON keeps this handle rather than copying it. Cache the single
+        // extracted icon for the process lifetime so repeated tray restores do
+        // not leak a new HICON or leave the window with a dangling handle.
+        Some(large_icon as isize)
+    })
+}
+
+/// Load the titlebar icon from `build\max-portable\icons\titlebar.ico` next to the exe.
+/// Cached in `OnceLock` so we only load the file once per process lifetime.
+#[cfg(target_os = "windows")]
+fn titlebar_icon_handle() -> Option<isize> {
+    static TITLEBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
+
+    *TITLEBAR_ICON.get_or_init(|| {
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!(
+                    "[Pake] Failed to resolve the app executable for its titlebar icon: {error}"
+                );
+                return None;
+            }
+        };
+        let icon_path = exe.parent().map(|d| d.join("icons/titlebar.ico"));
+        let Some(icon_path) = icon_path else {
+            eprintln!("[Pake] No parent directory for titlebar icon");
+            return None;
+        };
+
+        let wide: Vec<u16> = icon_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let hicon = unsafe {
+            LoadImageW(
+                ptr::null_mut(),
+                wide.as_ptr(),
+                IMAGE_ICON,
+                16,
+                16,
+                LR_LOADFROMFILE,
+            )
+        };
+
+        if hicon.is_null() {
+            eprintln!("[Pake] Failed to load titlebar.ico from {}", icon_path.display());
+            None
+        } else {
+            Some(hicon as isize)
+        }
+    })
+}
+
+pub fn reapply_window_icon(window: &WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(taskbar_icon) = taskbar_icon_handle() else {
+            return;
+        };
+        match window.hwnd() {
+            Ok(hwnd) => unsafe {
+                let titlebar_icon = titlebar_icon_handle().unwrap_or(0);
+                SendMessageW(hwnd.0, WM_SETICON, ICON_SMALL as usize, titlebar_icon);
+                SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
+            },
+            Err(error) => {
+                eprintln!("[Pake] Failed to resolve the window handle for its taskbar icon: {error}");
+            }
+        }
     }
 }
 
@@ -130,50 +240,6 @@ pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     build_window_with_label(app, &state.pake_config, &state.tauri_config, &label)
 }
 
-#[cfg(target_os = "windows")]
-fn taskbar_icon_handle() -> Option<isize> {
-    static TASKBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
-
-    *TASKBAR_ICON.get_or_init(|| {
-        let executable = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(error) => {
-                eprintln!(
-                    "[Pake] Failed to resolve the app executable for its taskbar icon: {error}"
-                );
-                return None;
-            }
-        };
-        let executable_wide: Vec<u16> = executable
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut large_icon = ptr::null_mut();
-        let extracted = unsafe {
-            ExtractIconExW(
-                executable_wide.as_ptr(),
-                0,
-                &mut large_icon,
-                ptr::null_mut(),
-                1,
-            )
-        };
-        if extracted == 0 || large_icon.is_null() {
-            eprintln!(
-                "[Pake] Failed to extract the taskbar icon from {}.",
-                executable.display()
-            );
-            return None;
-        }
-
-        // WM_SETICON keeps this handle rather than copying it. Cache the single
-        // extracted icon for the process lifetime so repeated tray restores do
-        // not leak a new HICON or leave the window with a dangling handle.
-        Some(large_icon as isize)
-    })
-}
-
 /// Subscribe to WebView2's native `DownloadStarting` event so downloads that
 /// Pake's `on_download` cannot see (blob:, data:, in-memory media MAX hands
 /// out as blob URLs) still reach the user. With `SetHandled(false)` WebView2
@@ -224,30 +290,6 @@ fn install_download_handler(
         }
     }
 }
-
-// Apps autostarted at Windows logon can register their icons before Explorer's
-// icon cache is ready (#1323). Re-assert both the small/title-bar icon and the
-// large taskbar icon whenever a window becomes visible.
-#[cfg(target_os = "windows")]
-pub fn reapply_window_icon(window: &WebviewWindow) {
-    let Some(taskbar_icon) = taskbar_icon_handle() else {
-        return;
-    };
-    match window.hwnd() {
-        Ok(hwnd) => unsafe {
-            // Keep the app icon on the taskbar, but clear the small (title
-            // bar) icon so the caption's top-left corner shows no icon.
-            SendMessageW(hwnd.0, WM_SETICON, ICON_SMALL as usize, 0);
-            SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
-        },
-        Err(error) => {
-            eprintln!("[Pake] Failed to resolve the window handle for its taskbar icon: {error}");
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn reapply_window_icon(_window: &WebviewWindow) {}
 
 struct WindowBuildOptions<'a> {
     label: &'a str,

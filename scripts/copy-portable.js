@@ -57,6 +57,20 @@ if (fs.existsSync(readmeSrc)) {
   console.warn(`[copy-portable] readme.txt not found at ${readmeSrc}`);
 }
 
+// Copy the titlebar icon next to the exe. Not embedded; re-copied on every
+// build because the wipe above removes it.
+const iconsDir = path.join(targetDir, "icons");
+fs.mkdirSync(iconsDir, { recursive: true });
+
+const src = path.join(root, "src-tauri", "icons", "titlebar.ico");
+const dest = path.join(iconsDir, "titlebar.ico");
+if (fs.existsSync(src)) {
+  fs.copyFileSync(src, dest);
+  console.log(`[copy-portable] Copied titlebar.ico -> ${dest}`);
+} else {
+  console.warn(`[copy-portable] titlebar.ico not found at ${src}`);
+}
+
 const size = fs.statSync(destExe).size;
 console.log(
   `[copy-portable] Copied MaxPortable.exe -> ${destExe} (${size} bytes)`,

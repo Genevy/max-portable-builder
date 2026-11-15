@@ -106,6 +106,7 @@ MAX Portable решает задачу удобного доступа к веб
 (см. «Реестр» ниже).
 
 ### Прочее
+- Иконка заголовка окна: `titlebar.ico` в папке `icons\` рядом с exe.
 - Ярлык на рабочем столе.
 - DevTools в релизной сборке не открываются.
 - Ограничение кэша: 50 МБ диск + 25 МБ медиа.
@@ -208,6 +209,7 @@ max-portable-builder/
 │   │   │   └── window.rs
 │   │   └── inject/           — штатные JS-инъекции Pake
 │   ├── icons/app.ico
+│   ├── icons/titlebar.ico
 │   ├── build.rs
 │   ├── Cargo.toml
 │   ├── Cargo.lock
