@@ -734,7 +734,7 @@ fn build_window(
     );
 
     #[cfg(target_os = "windows")]
-    let mut windows_browser_args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-blink-features=AutomationControlled --disk-cache-size=52428800 --media-cache-size=26214400 --disable-gpu-shader-disk-cache");
+    let mut windows_browser_args = String::from("--disable-features=msWebOOUI,msPdfOOUI --disk-cache-size=52428800 --media-cache-size=26214400 --autoplay-policy=no-user-gesture-required");
 
     #[cfg(target_os = "linux")]
     let mut linux_browser_args = String::from("--disable-blink-features=AutomationControlled");
